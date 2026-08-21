@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>Local RAG 테스트</title>
+    <style>
+        body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 16px; }
+        h2 { margin-top: 40px; }
+        input[type=text] { width: 60%; padding: 8px; }
+        select { padding: 8px; }
+        button { padding: 8px 16px; }
+        #answer, #uploadResult { white-space: pre-wrap; background: #f5f5f5; padding: 12px; margin-top: 12px; border-radius: 6px; min-height: 20px; }
+        #loading { display: none; color: #888; }
+        .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+
+<h2>RAG 질문하기</h2>
+<div class="row">
+    <input type="text" id="question" placeholder="질문을 입력하세요" />
+    <select id="askStore">
+        <option value="opensearch">OpenSearch</option>
+        <option value="pgvector">pgvector</option>
+    </select>
+    <button id="askButton" onclick="ask()">질문</button>
+</div>
+<div id="loading">답변 생성 중...</div>
+<div id="answer"></div>
+
+<h2>문서 업로드 (PDF/TXT)</h2>
+<div class="row">
+    <input type="file" id="fileInput" accept=".pdf,.txt,.doc,.docx,.xlsx,xls" />
+    <select id="uploadStore">
+        <option value="opensearch">OpenSearch</option>
+        <option value="pgvector">pgvector</option>
+    </select>
+    <button onclick="upload()">업로드</button>
+</div>
+<div id="uploadResult"></div>
+
+<h2>폴더 업로드 (PDF/TXT만 자동 필터링)</h2>
+<div class="row">
+    <input type="file" id="folderInput" webkitdirectory directory multiple />
+    <select id="folderStore">
+        <option value="opensearch">OpenSearch</option>
+        <option value="pgvector">pgvector</option>
+    </select>
+    <button id="folderButton" onclick="uploadFolder()">폴더 업로드</button>
+</div>
+<div id="folderResult"></div>
+
+<script>
+    let asking = false;
+
+    async function ask() {
+        if (asking) return; // 응답 오기 전 중복 클릭 방지
+        const question = document.getElementById('question').value;
+        const store = document.getElementById('askStore').value;
+        if (!question) return;
+
+        asking = true;
+        const askButton = document.getElementById('askButton');
+        askButton.disabled = true;
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('answer').textContent = '';
+
+        try {
+            const res = await fetch('/api/rag/ask?question=' + encodeURIComponent(question) + '&store=' + store);
+            const text = await res.text();
+            document.getElementById('answer').textContent = text;
+        } catch (e) {
+            document.getElementById('answer').textContent = '오류: ' + e.message;
+        } finally {
+            document.getElementById('loading').style.display = 'none';
+            askButton.disabled = false;
+            asking = false;
+        }
+    }
+
+    async function upload() {
+        const fileInput = document.getElementById('fileInput');
+        const store = document.getElementById('uploadStore').value;
+        if (!fileInput.files.length) return;
+
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        document.getElementById('uploadResult').textContent = '업로드 중...';
+
+        const endpoint = store === 'pgvector' ? '/api/pgvector/ingest' : '/api/documents/upload';
+
+        try {
+            const res = await fetch(endpoint, { method: 'POST', body: formData });
+            const json = await res.json();
+            document.getElementById('uploadResult').textContent = JSON.stringify(json, null, 2);
+        } catch (e) {
+            document.getElementById('uploadResult').textContent = '오류: ' + e.message;
+        }
+    }
+
+    function isSupportedFile(filename) {
+        const lower = filename.toLowerCase();
+        return lower.endsWith('.pdf') || lower.endsWith('.txt');
+    }
+
+    async function uploadFolder() {
+        const folderInput = document.getElementById('folderInput');
+        const store = document.getElementById('folderStore').value;
+        const folderButton = document.getElementById('folderButton');
+        const resultDiv = document.getElementById('folderResult');
+
+        if (!folderInput.files.length) return;
+
+        const allFiles = Array.from(folderInput.files);
+        const targetFiles = allFiles.filter(f => isSupportedFile(f.name));
+        const skippedFiles = allFiles.filter(f => !isSupportedFile(f.name));
+
+        const endpoint = store === 'pgvector' ? '/api/pgvector/ingest' : '/api/documents/upload';
+
+        folderButton.disabled = true;
+        const succeeded = [];
+        const failed = [];
+
+        for (let i = 0; i < targetFiles.length; i++) {
+            const file = targetFiles[i];
+            resultDiv.textContent = `처리 중... (${i + 1}/${targetFiles.length}) ${file.name}`;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const res = await fetch(endpoint, { method: 'POST', body: formData });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                await res.json();
+                succeeded.push(file.name);
+            } catch (e) {
+                failed.push({ name: file.name, reason: e.message });
+            }
+        }
+
+        const lines = [];
+        lines.push(`총 파일 수: ${allFiles.length}`);
+        lines.push(`처리 완료: ${succeeded.length}개`);
+        lines.push(`처리 실패: ${failed.length}개 (지원 확장자지만 업로드 중 오류)`);
+        lines.push(`형식 미지원으로 제외: ${skippedFiles.length}개 (.pdf, .txt 아님)`);
+
+        if (failed.length > 0) {
+            lines.push('');
+            lines.push('실패한 파일:');
+            failed.forEach(f => lines.push(`  - ${f.name} (${f.reason})`));
+        }
+
+        if (skippedFiles.length > 0) {
+            lines.push('');
+            lines.push('제외된 파일:');
+            skippedFiles.forEach(f => lines.push(`  - ${f.name}`));
+        }
+
+        resultDiv.textContent = lines.join('\n');
+        folderButton.disabled = false;
+    }
+</script>
+</body>
+</html>

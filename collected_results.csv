@@ -1,0 +1,245 @@
+﻿question,store,answer,contexts,server_elapsed_ms,client_elapsed_s,error,ground_truth
+이 사업보고서의 회사가 속한 산업 분야는 무엇인가요?,opensearch,이 사업보고서가 제공되지 않았습니다. 따라서 해당 회사가 속한 산업 분야를 정확히 판단할 수 없습니다. 사업보고서를 첨부하거나 추가 정보를 제공해 주시면 도움을 드릴 수 있습니다.,[],15526,15.54,,
+이 사업보고서의 회사가 속한 산업 분야는 무엇인가요?,pgvector,"The business report was not provided in your query, so I cannot determine the industry the company belongs to. Please provide the business report for accurate analysis.",[],14268,14.27,,
+최근 분기 매출액은 얼마인가요?,opensearch,최근 분기 매출액을 알려드릴 수 없습니다. 회사명을 알려주시면 정확한 정보를 제공할 수 있습니다.,[],14641,14.65,,
+최근 분기 매출액은 얼마인가요?,pgvector,"안녕하세요. 최근 분기 매출액에 대한 정보를 제공해 드릴 수 없습니다. 현재 실시간 데이터에 접근할 수 없으며, 구체적인 회사명을 알려주시면 해당 회사의 최근 분기 매출액을 확인해 드릴 수 있습니다. 추가로 궁금한 사항이 있으시면 알려주세요.",[],8659,8.68,,
+회사의 주요 리스크 요인은 무엇인가요?,opensearch,"회사의 주요 리스크 요인은 다음과 같습니다.
+
+1. **시장 리스크**: 경쟁 심화, 경제 불확실성, 시장 수요 변동 등으로 인한 수익 감소  
+2. **운영 리스크**: 공급망 중단, 내부 프로세스 결함, 사기 및 데이터 유출  
+3. **재무 리스크**: 유동성 부족, 신용 위험, 금리 및 환율 변동  
+4. **규제 리스크**: 법규 변화, 규제 준수 실패로 인한 법적 문제  
+5. **기술 리스크**: 사이버 보안 위협, 기술 장애",[],27596,27.6,,
+회사의 주요 리스크 요인은 무엇인가요?,pgvector,"The main risk factors for a company include:  
+
+1. **Market Risk**: Exposure to fluctuations in market prices, interest rates, exchange rates, or commodity prices that can lead to financial losses.  
+2. **Credit Risk**: The possibility that customers, suppliers, or counterparties fail to meet their financial obligations.  
+3. **Operational Risk**: Threats arising from internal processes, human error, system failures, or external events (e.g., natural disasters, supply chain disruptions).  
+4. **Liquidity Risk**: Inability to meet short-term financial obligations due to insufficient cash flow or market access.  
+5. **Regulatory Risk**: Changes in laws, regulations, or compliance requirements that could impact operations, costs, or legal standing.  
+6. **Cybersecurity Risk**: Vulnerabilities to data breaches, cyberattacks, or system failures that compromise sensitive information or operations.  
+
+These factors vary by industry and company size but represent the most critical areas that require proactive management to ensure stability and resilience.",[],24233,24.25,,
+영업이익률은 전년 대비 어떻게 변화했나요?,opensearch,"To determine how the operating profit margin has changed compared to the previous year, you need to calculate the operating profit margin for both the current year and the previous year using the formula:  
+
+**Operating Profit Margin = (Operating Profit / Revenue) × 100**  
+
+Without specific financial data for the company in question, I cannot provide a numerical answer. However, here’s an example for clarity:  
+- If the current year’s operating profit margin is **15%** and the previous year’s is **12%**, the change would be **+3 percentage points**.  
+
+To find the exact change, you would need the company’s revenue and operating profit figures for both years. If you share the relevant data, I can help calculate the precise change!",[],19360,19.37,,
+영업이익률은 전년 대비 어떻게 변화했나요?,pgvector,"영업이익률(Operating Profit Margin)은 영업이익을 매출액으로 나눈 값으로, **(영업이익 / 매출액) × 100**으로 계산됩니다. 전년 대비 변화를 정확히 분석하려면 **현재년과 전년의 영업이익 및 매출액 데이터**가 필요합니다. 
+
+예시를 들어,  
+- **현재년**: 영업이익 100억 원, 매출액 500억 원 → 영업이익률 **20%**  
+- **전년**: 영업이익 80억 원, 매출액 400억 원 → 영업이익률 **20%**  
+
+이 경우 전년 대비 변화는 **0%**입니다. 
+
+하지만 구체적인 회사나 데이터가 제공되지 않았으므로, **정확한 변화율을 알 수 없습니다**. 실제 분석을 위해서는 해당 기업의 재무제표(영업이익, 매출액)를 참조해야 합니다. 
+
+따라서 정답은:  
+**""전년 대비 영업이익률 변화율을 정확히 알기 위해서는 현재년과 전년의 영업이익 및 매출액 데이터가 필요합니다. 제공된 정보 없이 구체적인 수치를 계산할 수 없습니다.""**",[],18833,18.84,,
+회사의 주요 사업 부문은 어떻게 구성되어 있나요?,opensearch,"The structure of a company's main business sectors varies depending on the industry, strategic goals, and operational focus. Here’s a general overview of common organizational patterns and examples:
+
+---
+
+### **1. Product/Service-Based Segments**  
+Companies often group their business around specific products, services, or technologies.  
+**Examples**:  
+- **Apple**: Consumer Electronics (iPhone, Mac), Software (iOS, macOS), and Services (Apple Music, iCloud).  
+- **Samsung**: Semiconductors, Mobile Phones, Home Appliances, and Displays.  
+
+---
+
+### **2. Geographic Segments**  
+Multinational companies may divide operations by region to manage local markets and regulations.  
+**Examples**:  
+- **Unilever**: Operations in North America, Europe, Asia-Pacific, and Africa (e.g., Dove, Lipton).  
+- **Toyota**: Global divisions for manufacturing and sales in different regions (e.g., Japan, North America, Europe).  
+
+---
+
+### **3. Customer-Based Segments**  
+Businesses target distinct customer groups (e.g., B2B, B2C, or niche markets).  
+**Examples**:  
+- **Amazon**: E-commerce (B2C), Cloud Computing (AWS), Digital Streaming (Prime Video), and Logistics (Fulfillment).  
+- **Microsoft**: Enterprise Software (Azure, Office 365) and Consumer Products (Xbox, Windows).  
+
+---
+
+### **4. Operational Units**  
+Some companies structure sectors around core functions like R&D, manufacturing, or sales.  
+**Examples**:  
+- **Tesla**: Battery Production, Electric Vehicles, Energy Storage, and Software (Autopilot).  
+- **Procter & Gamble**: Personal Care (Pampers), Household Products (Tide), and Health (Olay).  
+
+---
+
+### **Key Considerations**  
+- **Flexibility**: Companies often restructure sectors to adapt to market changes (e.g., shifting from physical retail to e-commerce).  
+- **Overlaps**: Some sectors may intersect (e.g., Amazon’s AWS serves both B2B and B2C clients).  
+- **Parent Companies**: Larger corporations may have multiple subsidiaries under a single parent company (e.g., Samsung Group’s diverse sectors).  
+
+If you have a specific company in mind, I can provide more tailored details! 😊",[],20201,20.22,,
+회사의 주요 사업 부문은 어떻게 구성되어 있나요?,pgvector,"The structure of a company's main business segments varies depending on the company's industry, size, strategic goals, and operational needs. However, most companies organize their business segments using the following common criteria:
+
+---
+
+### 1. **Product/Service-Based Segmentation**  
+Companies often divide their operations by product lines, services, or technology.  
+**Example**:  
+- *Apple*: Segments include **iPhone**, **Mac**, **Services** (e.g., Apple Music, iCloud), and **Wearables** (e.g., Apple Watch).  
+- *Samsung*: Segments include **Smartphones**, **TVs**, **Semiconductors**, and **Home Appliances**.
+
+---
+
+### 2. **Geographic Segmentation**  
+Businesses may structure segments by region or country to manage regional markets and compliance.  
+**Example**:  
+- *Coca-Cola*: Segments include **North America**, **Europe**, **Asia-Pacific**, and **Latin America**.  
+- *Amazon*: Segments like **Global Retail**, **Cloud Computing (AWS)**, and **Marketplace** are often tied to geographic regions.
+
+---
+
+### 3. **Customer-Based Segmentation**  
+Companies categorize segments by customer type (e.g., B2B vs. B2C, industry-specific clients).  
+**Example**:  
+- *Microsoft*: Segments include **Enterprise** (business clients), **Consumer** (individuals), and **Developer** (software creators).  
+- *Tesla*: Segments like **Electric Vehicles**, **Energy Solutions**, and **Autonomous Technology** target different customer needs.
+
+---
+
+### 4. **Operational/Process-Based Segmentation**  
+Some companies split operations by internal processes or capabilities.  
+**Example**:  
+- *General Electric (GE)*: Historically used segments like **Aerospace**, **Energy**, and **Healthcare** based on core operational divisions.  
+- *Unilever*: Segments include **Food & Beverage**, **Personal Care**, and **Home Care** based on product categories.
+
+---
+
+### 5. **Hybrid Segmentation**  
+Many companies use a combination of the above criteria for clarity and strategic flexibility.  
+**Example**:  
+- *Nike*: Segments include **Sportswear**, **Apparel**, **Footwear**, and **Sustainability Initiatives** (blending product lines and purpose-driven goals).
+
+---
+
+### Why Segmentation Matters  
+Business segments help companies:  
+- Track financial performance per division.  
+- Allocate resources efficiently.  
+- Identify growth opportunities.  
+- Comply with regulatory reporting standards (e.g., GAAP or IFRS).
+
+---
+
+### Key Takeaway  
+There is no universal structure, but most companies prioritize **product**, **geography**, or **customer** segmentation to align with their strategic priorities. The choice depends on the company’s industry, scale, and how they want to manage risk and growth. For instance, a global tech firm might focus on product and geographic segments, while a local manufacturing company might prioritize operational or customer-based segments.
+
+If you have a specific company in mind, I can provide a tailored example! 😊",[],24131,24.13,,
+최대주주는 누구인가요?,opensearch,"최대주주를 확인하려면 구체적인 회사명을 알려주셔야 합니다. 예를 들어, 삼성전자(Samsung Electronics)의 경우 최대주주는 [특정 기업]입니다. 회사명을 알려주시면 정확한 정보를 제공해 드리겠습니다.",[],24348,24.35,,
+최대주주는 누구인가요?,pgvector,"The largest shareholder depends on the specific company you're referring to. For example, Samsung Electronics' largest shareholder is the Samsung Group, but without knowing the company name, it's impossible to provide an accurate answer. Could you please specify which company you're asking about?",[],21111,21.12,,
+회사의 연구개발비 지출 규모는 어느 정도인가요?,opensearch,"회사의 연구개발비 지출 규모는 해당 회사의 규모와 산업 분야에 따라 매우 달라집니다. 예를 들어, 삼성전자와 같은 대기업은 연간 수십억 달러 이상의 R&D 비용을 지출하지만, 소규모 기업은 수천만 원 수준으로 다양합니다. 정확한 지출 규모를 확인하려면 해당 회사의 재무 보고서에서 '연구개발비' 항목을 참조하시기 바랍니다.",[],36778,36.78,,
+회사의 연구개발비 지출 규모는 어느 정도인가요?,pgvector,"회사 이름을 알려주시면 정확한 연구개발비 지출 규모를 알려드릴 수 있습니다. 연구개발비는 회사의 규모, 산업 분야, 전략에 따라 크게 달라지므로, 구체적인 회사명을 알려주시면 더 정확한 정보를 제공할 수 있습니다.",[],14407,14.43,,
+오늘 서울 날씨는 어때?,opensearch,안녕하세요! 현재 실시간 날씨 정보를 확인할 수 없습니다. 서울의 오늘 날씨는 한국기상청 웹사이트나 네이버 클라우드에서 정확한 정보를 확인해 보세요. 도움이 필요하시면 알려주세요!,[],14816,14.82,,
+오늘 서울 날씨는 어때?,pgvector,실시간 날씨 정보를 제공할 수 없습니다. 오늘 서울의 날씨는 날씨 앱이나 웹사이트에서 확인해 보세요.,[],17723,17.74,,
+회사의 임직원 수는 몇 명인가요?,opensearch,현재 회사 이름을 알려주셔야만 정확한 정보를 제공할 수 있습니다. 어떤 회사에 대해 물어보신가요?,[],10585,10.59,,
+회사의 임직원 수는 몇 명인가요?,pgvector,"회사 이름을 알려주셔야만 정확한 임직원 수를 알려드릴 수 있습니다. 예시로, '삼성전자'는 현재 약 20만 명의 직원을 보유하고 있습니다.",[],10755,10.76,,
+파이썬으로 피보나치 수열을 구하는 방법을 알려줘,opensearch,"피보나치 수열을 구하는 방법은 다음과 같습니다. 이 코드는 첫 번째 항이 0, 두 번째 항이 1인 수열을 기준으로 합니다.
+
+```python
+def fibonacci(n):
+    if n <= 0:
+        return []
+    elif n == 1:
+        return [0]
+    fib = [0, 1]
+    for i in range(2, n):
+        fib.append(fib[i-1] + fib[i-2])
+    return fib
+
+# 예시: 첫 번째 10개의 피보나치 수열
+print(fibonacci(10))
+```
+
+**실행 결과**:  
+`[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]`
+
+### 설명
+1. **기본 조건 처리**: 
+   - `n <= 0`일 때 빈 리스트 반환
+   - `n == 1`일 때 `[0]` 반환
+2. **수열 생성**:
+   - 초기값으로 `[0, 1]` 설정
+   - `n`개의 항을 생성하기 위해 `2`부터 `n-1`까지 반복
+   - 각 항은 이전 두 항의 합으로 계산
+
+이 코드는 피보나치 수열을 효율적으로 생성하며, `n`을 입력으로 받아 해당 수량의 수열을 반환합니다.",[],52503,52.51,,
+파이썬으로 피보나치 수열을 구하는 방법을 알려줘,pgvector,"To generate the Fibonacci sequence in Python, you can use an **iterative approach** for efficiency. Here's a clear explanation and code example:
+
+---
+
+### 1. **Fibonacci Sequence Definition**
+The Fibonacci sequence starts with `0` and `1`, and each subsequent number is the sum of the previous two:
+```
+0, 1, 1, 2, 3, 5, 8, 13, 21, ...
+```
+
+---
+
+### 2. **Iterative Method (Recommended)**
+This method avoids recursion overhead and is efficient for generating the sequence up to a specified length.
+
+#### Python Code
+```python
+def generate_fibonacci_sequence(n):
+    if n <= 0:
+        return []
+    elif n == 1:
+        return [0]
+    else:
+        sequence = [0, 1]
+        for _ in range(2, n):
+            next_num = sequence[-1] + sequence[-2]
+            sequence.append(next_num)
+        return sequence
+
+# Example usage: First 10 terms
+print(generate_fibonacci_sequence(10))  # Output: [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+```
+
+#### How It Works:
+1. **Base Cases**: 
+   - If `n <= 0`, return an empty list.
+   - If `n == 1`, return `[0]`.
+2. **Loop**: For `n > 1`, initialize the sequence with `[0, 1]` and iteratively add the sum of the last two numbers until the sequence has `n` terms.
+
+---
+
+### 3. **Key Notes**
+- **Efficiency**: This iterative approach runs in **O(n)** time and uses **O(n)** space, making it optimal for most use cases.
+- **Recursive Alternative (Less Efficient)**:
+  ```python
+  def fib_recursive(n):
+      if n <= 1:
+          return n
+      return fib_recursive(n-1) + fib_recursive(n-2)
+  ```
+  *This method is inefficient for large `n` due to repeated calculations.*
+
+---
+
+### 4. **Why This Works**
+- The loop starts from index `2` (since the first two terms are already defined) and runs `n-2` times to generate the remaining terms.
+- Using `sequence[-1]` and `sequence[-2]` ensures we always access the last two numbers in the sequence.
+
+---
+
+### Example Output
+For `n = 10`, the output is:
+```
+[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+```
+
+This method is ideal for generating the Fibonacci sequence in Python efficiently. 🐍",[],48886,48.89,,

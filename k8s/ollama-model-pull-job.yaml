@@ -1,0 +1,19 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ollama-model-pull
+  namespace: rag-demo
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: pull
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              until curl -s http://ollama:11434 >/dev/null; do sleep 2; done
+              curl -s http://ollama:11434/api/pull -d '{"name":"qwen3:4b"}'
+              curl -s http://ollama:11434/api/pull -d '{"name":"qwen3-embedding:0.6b"}'

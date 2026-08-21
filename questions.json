@@ -1,0 +1,42 @@
+[
+  {
+    "question": "이 사업보고서의 회사가 속한 산업 분야는 무엇인가요?",
+    "ground_truth": ""
+  },
+  {
+    "question": "최근 분기 매출액은 얼마인가요?",
+    "ground_truth": ""
+  },
+  {
+    "question": "회사의 주요 리스크 요인은 무엇인가요?",
+    "ground_truth": ""
+  },
+  {
+    "question": "영업이익률은 전년 대비 어떻게 변화했나요?",
+    "ground_truth": ""
+  },
+  {
+    "question": "회사의 주요 사업 부문은 어떻게 구성되어 있나요?",
+    "ground_truth": ""
+  },
+  {
+    "question": "최대주주는 누구인가요?",
+    "ground_truth": ""
+  },
+  {
+    "question": "회사의 연구개발비 지출 규모는 어느 정도인가요?",
+    "ground_truth": ""
+  },
+  {
+    "question": "오늘 서울 날씨는 어때?",
+    "ground_truth": ""
+  },
+  {
+    "question": "회사의 임직원 수는 몇 명인가요?",
+    "ground_truth": ""
+  },
+  {
+    "question": "파이썬으로 피보나치 수열을 구하는 방법을 알려줘",
+    "ground_truth": ""
+  }
+]

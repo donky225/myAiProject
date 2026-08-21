@@ -1,0 +1,80 @@
+"""
+questions.json의 질문들을 OpenSearch / pgvector 두 경로로 각각 던져서
+answer, contexts, 응답시간을 수집하고 결과를 CSV로 저장합니다.
+
+사용법:
+    python collect_results.py
+"""
+import json
+import time
+import requests
+import pandas as pd
+
+BASE_URL = "http://localhost:8080/api/rag/evaluate"
+STORES = ["opensearch", "pgvector"]
+QUESTIONS_FILE = "questions.json"
+OUTPUT_FILE = "collected_results.csv"
+
+
+def load_questions(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def call_evaluate(question, store):
+    params = {"question": question, "store": store}
+    start = time.time()
+    try:
+        res = requests.get(BASE_URL, params=params, timeout=120)
+        res.raise_for_status()
+        data = res.json()
+        client_elapsed = time.time() - start
+        return {
+            "question": question,
+            "store": store,
+            "answer": data.get("answer", ""),
+            "contexts": data.get("contexts", []),
+            "server_elapsed_ms": data.get("elapsedMillis", None),
+            "client_elapsed_s": round(client_elapsed, 2),
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "question": question,
+            "store": store,
+            "answer": "",
+            "contexts": [],
+            "server_elapsed_ms": None,
+            "client_elapsed_s": round(time.time() - start, 2),
+            "error": str(e),
+        }
+
+
+def main():
+    questions = load_questions(QUESTIONS_FILE)
+    results = []
+
+    total = len(questions) * len(STORES)
+    count = 0
+
+    for q in questions:
+        for store in STORES:
+            count += 1
+            print(f"[{count}/{total}] ({store}) {q['question'][:40]}...")
+            result = call_evaluate(q["question"], store)
+            result["ground_truth"] = q.get("ground_truth", "")
+            results.append(result)
+
+    df = pd.DataFrame(results)
+    df.to_csv(OUTPUT_FILE, index=False, encoding="utf-8-sig")
+    print(f"\n완료. {OUTPUT_FILE} 에 {len(df)}건 저장됨.")
+
+    errors = df[df["error"].notna()]
+    if len(errors) > 0:
+        print(f"\n경고: {len(errors)}건에서 에러 발생:")
+        for _, row in errors.iterrows():
+            print(f"  - [{row['store']}] {row['question'][:30]}... : {row['error']}")
+
+
+if __name__ == "__main__":
+    main()
