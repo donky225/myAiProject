@@ -4,6 +4,12 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+voice-pipeline/voice-pipeline-env/
+venv/
+.venv/
+*.dll
+*.db
+
 ### STS ###
 .apt_generated
 .classpath

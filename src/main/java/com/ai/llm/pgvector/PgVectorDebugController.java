@@ -20,8 +20,9 @@ public class PgVectorDebugController {
     }
 
     @GetMapping("/api/pgvector/debug-search")
-    public List<Map<String, Object>> debugSearch(@RequestParam String question) {
-        List<Document> hits = pgVectorService.search(question, 5);
+    public List<Map<String, Object>> debugSearch(@RequestParam String question,
+                                                 @RequestParam(defaultValue = "5") int topK) {
+        List<Document> hits = pgVectorService.search(question, topK);
         return hits.stream()
                 .map(doc -> Map.<String, Object>of(
                         "score", doc.getScore() == null ? "null" : doc.getScore(),

@@ -1,0 +1,63 @@
+### 인덱스 문서 수 확인
+GET http://localhost:9200/rag_documents/_count
+
+### 인덱스 매핑(스키마) 확인
+GET http://localhost:9200/rag_documents/_mapping
+
+### 최근 문서 몇 건 미리보기
+GET http://localhost:9200/rag_documents/_search
+Content-Type: application/json
+
+{
+  "size": 3,
+  "query": { "match_all": {} }
+}
+
+### 특정 키워드 포함 문서 검색 (텍스트 검색, 벡터 검색 아님)
+GET http://localhost:9200/rag_documents/_search
+Content-Type: application/json
+
+{
+  "size": 5,
+  "query": {
+    "match": {
+      "content": "임직원"
+    }
+  }
+}
+
+### 인덱스 전체 삭제 (청킹 방식 바꾼 뒤 초기화할 때)
+DELETE http://localhost:9200/rag_documents
+
+### 인덱스를 knn_vector 매핑으로 명시적으로 재생성
+### (인덱스를 삭제 후 문서를 바로 업로드하면 동적 매핑으로 재생성되어
+###  embedding 필드가 knn_vector 타입을 잃어버리므로, 반드시 먼저 이 요청으로 생성해야 함)
+PUT http://localhost:9200/rag_documents
+Content-Type: application/json
+
+{
+  "settings": {
+    "index": {
+      "knn": true
+    }
+  },
+  "mappings": {
+    "properties": {
+      "title": { "type": "text" },
+      "content": { "type": "text" },
+      "embedding": {
+        "type": "knn_vector",
+        "dimension": 1024,
+        "method": {
+          "name": "hnsw",
+          "space_type": "cosinesimil",
+          "engine": "lucene"
+        }
+      }
+    }
+  }
+}
+
+### 매핑이 제대로 잡혔는지 확인 (embedding.type이 knn_vector여야 함)
+GET http://localhost:9200/rag_documents/_mapping
+

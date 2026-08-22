@@ -50,6 +50,36 @@
 </div>
 <div id="folderResult"></div>
 
+<h2>이미지 생성 (Stable Diffusion)</h2>
+<div class="row">
+    <input type="text" id="imagePrompt" placeholder="생성할 이미지를 설명하세요 (영어 권장)" />
+    <button id="imageButton" onclick="generateImage()">생성</button>
+</div>
+<div id="imageLoading" style="display:none; color:#888;">이미지 생성 중... (수십 초 걸릴 수 있습니다)</div>
+<div id="imageResult"></div>
+
+<h2>음성 파일 → 텍스트 변환 (STT)</h2>
+<div class="row">
+    <input type="file" id="sttFileInput" accept=".m4a,.mp3,.wav,.ogg,.flac" />
+    <button id="sttButton" onclick="runStt()">텍스트로 변환</button>
+</div>
+<div id="sttLoading" style="display:none; color:#888;">음성 인식 중...</div>
+<div id="sttResult"></div>
+
+<h2>텍스트 → 음성 변환 (TTS)</h2>
+<div class="row" style="align-items:flex-start;">
+    <textarea id="ttsText" placeholder="음성으로 변환할 텍스트를 입력하세요" rows="4" style="width:60%; padding:8px;"></textarea>
+</div>
+<div class="row">
+    <span>또는 파일 업로드:</span>
+    <input type="file" id="ttsFileInput" accept=".pdf,.txt" />
+</div>
+<div class="row">
+    <button id="ttsButton" onclick="runTts()">음성 생성</button>
+</div>
+<div id="ttsLoading" style="display:none; color:#888;">음성 생성 중... (텍스트가 길면 오래 걸릴 수 있습니다)</div>
+<div id="ttsResult"></div>
+
 <script>
     let asking = false;
 
@@ -159,6 +189,165 @@
 
         resultDiv.textContent = lines.join('\n');
         folderButton.disabled = false;
+    }
+
+    const SD_API_URL = 'http://localhost:7860';
+    let generatingImage = false;
+
+    async function generateImage() {
+        if (generatingImage) return;
+        const promptInput = document.getElementById('imagePrompt');
+        const koreanPrompt = promptInput.value;
+        if (!koreanPrompt) return;
+
+        const imageButton = document.getElementById('imageButton');
+        const loadingDiv = document.getElementById('imageLoading');
+        const resultDiv = document.getElementById('imageResult');
+
+        generatingImage = true;
+        imageButton.disabled = true;
+        resultDiv.innerHTML = '';
+
+        try {
+            // 1단계: 한글 프롬프트를 영어로 번역 (로컬 LLM 사용)
+            loadingDiv.textContent = '프롬프트 번역 중...';
+            loadingDiv.style.display = 'block';
+
+            const translateRes = await fetch('/api/image/translate-prompt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: koreanPrompt })
+            });
+            if (!translateRes.ok) throw new Error('번역 실패: HTTP ' + translateRes.status);
+            const translateData = await translateRes.json();
+            const englishPrompt = translateData.translated;
+
+            // 2단계: 번역된 영어 프롬프트로 이미지 생성
+            loadingDiv.textContent = `이미지 생성 중... (번역: "${englishPrompt}")`;
+
+            const res = await fetch(SD_API_URL + '/sdapi/v1/txt2img', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt: englishPrompt,
+                    negative_prompt: 'blurry, low quality, distorted',
+                    steps: 20,
+                    width: 512,
+                    height: 512,
+                    cfg_scale: 7
+                })
+            });
+
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+
+            if (data.images && data.images.length > 0) {
+                const translationNote = document.createElement('div');
+                translationNote.style.color = '#888';
+                translationNote.style.fontSize = '0.9em';
+                translationNote.textContent = `번역된 프롬프트: ${englishPrompt}`;
+                resultDiv.appendChild(translationNote);
+
+                const img = document.createElement('img');
+                img.src = 'data:image/png;base64,' + data.images[0];
+                img.style.maxWidth = '100%';
+                img.style.borderRadius = '6px';
+                img.style.marginTop = '8px';
+                resultDiv.appendChild(img);
+            } else {
+                resultDiv.textContent = '이미지가 생성되지 않았습니다.';
+            }
+        } catch (e) {
+            resultDiv.textContent = '오류: ' + e.message;
+        } finally {
+            loadingDiv.style.display = 'none';
+            imageButton.disabled = false;
+            generatingImage = false;
+        }
+    }
+
+    let sttRunning = false;
+
+    async function runStt() {
+        if (sttRunning) return;
+        const fileInput = document.getElementById('sttFileInput');
+        if (!fileInput.files.length) return;
+
+        const sttButton = document.getElementById('sttButton');
+        const loadingDiv = document.getElementById('sttLoading');
+        const resultDiv = document.getElementById('sttResult');
+
+        sttRunning = true;
+        sttButton.disabled = true;
+        loadingDiv.style.display = 'block';
+        resultDiv.textContent = '';
+
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        try {
+            const res = await fetch('/api/voice/stt', { method: 'POST', body: formData });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            resultDiv.textContent = data.text || '(인식된 텍스트 없음)';
+        } catch (e) {
+            resultDiv.textContent = '오류: ' + e.message;
+        } finally {
+            loadingDiv.style.display = 'none';
+            sttButton.disabled = false;
+            sttRunning = false;
+        }
+    }
+
+    let ttsRunning = false;
+
+    async function runTts() {
+        if (ttsRunning) return;
+        const text = document.getElementById('ttsText').value;
+        const fileInput = document.getElementById('ttsFileInput');
+        const file = fileInput.files.length ? fileInput.files[0] : null;
+
+        if (!text && !file) return;
+
+        const ttsButton = document.getElementById('ttsButton');
+        const loadingDiv = document.getElementById('ttsLoading');
+        const resultDiv = document.getElementById('ttsResult');
+
+        ttsRunning = true;
+        ttsButton.disabled = true;
+        loadingDiv.style.display = 'block';
+        resultDiv.innerHTML = '';
+
+        const formData = new FormData();
+        if (text) formData.append('text', text);
+        if (file) formData.append('file', file);
+
+        try {
+            const res = await fetch('/api/voice/tts', { method: 'POST', body: formData });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+
+            const blob = await res.blob();
+            const audioUrl = URL.createObjectURL(blob);
+
+            const audio = document.createElement('audio');
+            audio.controls = true;
+            audio.src = audioUrl;
+            resultDiv.appendChild(audio);
+
+            const downloadLink = document.createElement('a');
+            downloadLink.href = audioUrl;
+            downloadLink.download = 'speech.wav';
+            downloadLink.textContent = '다운로드';
+            downloadLink.style.display = 'block';
+            downloadLink.style.marginTop = '8px';
+            resultDiv.appendChild(downloadLink);
+        } catch (e) {
+            resultDiv.textContent = '오류: ' + e.message;
+        } finally {
+            loadingDiv.style.display = 'none';
+            ttsButton.disabled = false;
+            ttsRunning = false;
+        }
     }
 </script>
 </body>

@@ -35,7 +35,7 @@ deactivate () {
 # unset irrelevant variables
 deactivate nondestructive
 
-VIRTUAL_ENV="D:\demo\rag-eval-env"
+VIRTUAL_ENV="D:\MyAiProject\rag-eval-env"
 export VIRTUAL_ENV
 
 _OLD_VIRTUAL_PATH="$PATH"
