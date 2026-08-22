@@ -337,9 +337,16 @@
             const downloadLink = document.createElement('a');
             downloadLink.href = audioUrl;
             downloadLink.download = 'speech.wav';
-            downloadLink.textContent = '다운로드';
-            downloadLink.style.display = 'block';
-            downloadLink.style.marginTop = '8px';
+            downloadLink.textContent = '⬇ 음성 파일 다운로드';
+            downloadLink.style.display = 'inline-block';
+            downloadLink.style.marginTop = '10px';
+            downloadLink.style.padding = '8px 16px';
+            downloadLink.style.background = '#f0f0f0';
+            downloadLink.style.border = '1px solid #ccc';
+            downloadLink.style.borderRadius = '4px';
+            downloadLink.style.textDecoration = 'none';
+            downloadLink.style.color = '#333';
+            downloadLink.style.cursor = 'pointer';
             resultDiv.appendChild(downloadLink);
         } catch (e) {
             resultDiv.textContent = '오류: ' + e.message;
