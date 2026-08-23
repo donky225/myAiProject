@@ -58,6 +58,13 @@
 <div id="imageLoading" style="display:none; color:#888;">이미지 생성 중... (수십 초 걸릴 수 있습니다)</div>
 <div id="imageResult"></div>
 
+<h2>실시간 음성 대화 (베타 - 1단계: 연결 테스트)</h2>
+<div class="row">
+    <button id="micButton" onclick="toggleMic()">🎤 마이크 시작</button>
+    <span id="wsStatus" style="color:#888;">연결 안 됨</span>
+</div>
+<div id="wsLog" style="white-space:pre-wrap; background:#f5f5f5; padding:12px; margin-top:12px; border-radius:6px; min-height:60px; max-height:200px; overflow-y:auto; font-size:0.85em;"></div>
+
 <h2>음성 파일 → 텍스트 변환 (STT)</h2>
 <div class="row">
     <input type="file" id="sttFileInput" accept=".m4a,.mp3,.wav,.ogg,.flac" />
@@ -72,7 +79,7 @@
 </div>
 <div class="row">
     <span>또는 파일 업로드:</span>
-    <input type="file" id="ttsFileInput" accept=".pdf,.txt" />
+    <input type="file" id="ttsFileInput" accept=".pdf,.txt" onchange="extractTextFromFile()" />
 </div>
 <div class="row">
     <button id="ttsButton" onclick="runTts()">음성 생성</button>
@@ -300,6 +307,132 @@
     }
 
     let ttsRunning = false;
+
+    // ── 실시간 음성 (1단계: WebSocket 연결 + 오디오 청크 전송 테스트) ──
+    let micSocket = null;
+    let mediaRecorder = null;
+    let micStream = null;
+    let micActive = false;
+
+    function logWs(text) {
+        const logDiv = document.getElementById('wsLog');
+        const time = new Date().toLocaleTimeString();
+        logDiv.textContent += `[${time}] ${text}\n`;
+        logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    async function toggleMic() {
+        if (micActive) {
+            stopMic();
+        } else {
+            await startMic();
+        }
+    }
+
+    async function startMic() {
+        const statusSpan = document.getElementById('wsStatus');
+        const micButton = document.getElementById('micButton');
+
+        try {
+            // 1. 마이크 권한 요청
+            micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            logWs('마이크 접근 허용됨');
+
+            // 2. WebSocket 연결
+            const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/voice';
+            micSocket = new WebSocket(wsUrl);
+            micSocket.binaryType = 'arraybuffer';
+
+            micSocket.onopen = () => {
+                statusSpan.textContent = '연결됨';
+                statusSpan.style.color = 'green';
+                logWs('WebSocket 연결 성공: ' + wsUrl);
+
+                // 3. 오디오 캡처 시작 (250ms마다 청크 전송)
+                mediaRecorder = new MediaRecorder(micStream, { mimeType: 'audio/webm;codecs=opus' });
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0 && micSocket.readyState === WebSocket.OPEN) {
+                        event.data.arrayBuffer().then(buffer => micSocket.send(buffer));
+                    }
+                };
+                mediaRecorder.start(250);
+                logWs('오디오 캡처 시작 (250ms 청크)');
+            };
+
+            micSocket.onmessage = (event) => {
+                logWs('서버 응답: ' + event.data);
+            };
+
+            micSocket.onerror = (event) => {
+                logWs('WebSocket 오류 발생');
+                statusSpan.textContent = '오류';
+                statusSpan.style.color = 'red';
+            };
+
+            micSocket.onclose = () => {
+                logWs('WebSocket 연결 종료됨');
+                statusSpan.textContent = '연결 안 됨';
+                statusSpan.style.color = '#888';
+            };
+
+            micActive = true;
+            micButton.textContent = '⏹ 마이크 중지';
+        } catch (e) {
+            logWs('오류: ' + e.message);
+            statusSpan.textContent = '오류';
+            statusSpan.style.color = 'red';
+        }
+    }
+
+    function stopMic() {
+        const statusSpan = document.getElementById('wsStatus');
+        const micButton = document.getElementById('micButton');
+
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+        }
+        if (micStream) {
+            micStream.getTracks().forEach(track => track.stop());
+        }
+        if (micSocket) {
+            micSocket.close();
+        }
+
+        micActive = false;
+        micButton.textContent = '🎤 마이크 시작';
+        statusSpan.textContent = '연결 안 됨';
+        statusSpan.style.color = '#888';
+        logWs('마이크 중지됨');
+    }
+
+    async function extractTextFromFile() {
+        const fileInput = document.getElementById('ttsFileInput');
+        if (!fileInput.files.length) return;
+
+        const ttsTextArea = document.getElementById('ttsText');
+        const loadingDiv = document.getElementById('ttsLoading');
+
+        loadingDiv.textContent = '파일에서 텍스트 추출 중...';
+        loadingDiv.style.display = 'block';
+        ttsTextArea.disabled = true;
+
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        try {
+            const res = await fetch('/api/voice/extract-text', { method: 'POST', body: formData });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            ttsTextArea.value = data.text || '';
+        } catch (e) {
+            ttsTextArea.value = '';
+            document.getElementById('ttsResult').textContent = '텍스트 추출 오류: ' + e.message;
+        } finally {
+            loadingDiv.style.display = 'none';
+            ttsTextArea.disabled = false;
+            fileInput.value = ''; // 같은 파일 재선택 가능하도록 초기화, 이후 생성은 textarea 내용으로 진행
+        }
+    }
 
     async function runTts() {
         if (ttsRunning) return;

@@ -1,22 +1,24 @@
 """
-RAGAS의 evaluate() 실행기가 에러를 삼켜서 NaN만 나오는 문제를 진단하기 위해,
-지표 하나를 collected_results.csv의 첫 번째 유효한 행 하나에만 직접 호출해서
-실제 예외/트레이스백을 그대로 출력합니다.
+collected_results.csv를 읽어 RAGAS로 faithfulness / answer_relevancy를 계산하고,
+OpenSearch vs pgvector 비교 결과를 콘솔과 CSV로 출력합니다.
+
+평가용 LLM/임베딩은 OpenAI가 아닌 로컬 Ollama(qwen3:4b, qwen3-embedding:0.6b)를 사용합니다.
 
 사용법:
-    python debug_ragas_single.py
+    python evaluate_ragas.py
 """
 import ast
-import asyncio
-import traceback
-
 import pandas as pd
+
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 
-from ragas.dataset_schema import SingleTurnSample
-from ragas.metrics import Faithfulness
+from ragas import evaluate, EvaluationDataset
+from ragas.metrics import Faithfulness, AnswerRelevancy
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
+
+INPUT_FILE = "collected_results.csv"
+OUTPUT_FILE = "ragas_scores.csv"
 
 OLLAMA_BASE_URL = "http://localhost:11434"
 JUDGE_MODEL = "qwen3:4b"
@@ -24,6 +26,7 @@ EMBED_MODEL = "qwen3-embedding:0.6b"
 
 
 def parse_contexts(raw):
+    """CSV에 문자열로 저장된 파이썬 리스트를 실제 리스트로 변환."""
     if pd.isna(raw) or raw == "" or raw == "[]":
         return []
     try:
@@ -32,43 +35,64 @@ def parse_contexts(raw):
         return []
 
 
-async def main():
-    df = pd.read_csv("collected_results.csv")
+def main():
+    df = pd.read_csv(INPUT_FILE)
     df["contexts"] = df["contexts"].apply(parse_contexts)
-    evaluable = df[df["contexts"].apply(len) > 0].reset_index(drop=True)
+
+    # RAGAS의 faithfulness 지표는 컨텍스트가 있어야 의미가 있습니다.
+    # 문서와 무관한 질문(날씨, 코드 요청 등)은 컨텍스트가 비어있는 게 정상이므로 평가에서 제외합니다.
+    evaluable = df[df["contexts"].apply(len) > 0].copy()
+    skipped = df[df["contexts"].apply(len) == 0]
+
+    print(f"전체 {len(df)}건 중 평가 대상 {len(evaluable)}건 (컨텍스트 없는 {len(skipped)}건은 제외)")
+    if len(skipped) > 0:
+        print("제외된 질문:")
+        for _, row in skipped.iterrows():
+            print(f"  - [{row['store']}] {row['question'][:40]}")
 
     if len(evaluable) == 0:
-        print("평가할 데이터가 없습니다.")
+        print("평가할 데이터가 없습니다. collect_results.py를 먼저 실행하세요.")
         return
 
-    row = evaluable.iloc[0]
-    print(f"테스트 대상 질문: {row['question']}")
-    print(f"store: {row['store']}")
-    print(f"컨텍스트 개수: {len(row['contexts'])}")
+    # RAGAS 0.2+ 필드명 규격: user_input, response, retrieved_contexts, (reference)
+    eval_rows = []
+    for _, row in evaluable.iterrows():
+        eval_rows.append({
+            "user_input": row["question"],
+            "response": row["answer"],
+            "retrieved_contexts": row["contexts"],
+        })
 
-    sample = SingleTurnSample(
-        user_input=row["question"],
-        response=row["answer"],
-        retrieved_contexts=row["contexts"],
-    )
+    dataset = EvaluationDataset.from_list(eval_rows)
 
     evaluator_llm = LangchainLLMWrapper(
-        ChatOllama(model=JUDGE_MODEL, base_url=OLLAMA_BASE_URL, temperature=0)
+        ChatOllama(model=JUDGE_MODEL, base_url=OLLAMA_BASE_URL, temperature=0, format="json")
     )
     evaluator_embeddings = LangchainEmbeddingsWrapper(
         OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_BASE_URL)
     )
 
-    metric = Faithfulness(llm=evaluator_llm)
+    print("\nRAGAS 평가 실행 중... (로컬 LLM 채점이라 다소 시간이 걸립니다)")
+    result = evaluate(
+        dataset=dataset,
+        metrics=[Faithfulness(), AnswerRelevancy()],
+        llm=evaluator_llm,
+        embeddings=evaluator_embeddings,
+        raise_exceptions=True,  # 실패 시 NaN으로 조용히 넘어가지 않고 원인을 그대로 노출
+    )
 
-    print("\nFaithfulness 지표 직접 호출 중...")
-    try:
-        score = await metric.single_turn_ascore(sample)
-        print(f"\n성공. score = {score}")
-    except Exception:
-        print("\n에러 발생. 전체 트레이스백:")
-        traceback.print_exc()
+    scored_df = result.to_pandas()
+    scored_df["store"] = evaluable["store"].values
+    scored_df["server_elapsed_ms"] = evaluable["server_elapsed_ms"].values
+
+    scored_df.to_csv(OUTPUT_FILE, index=False, encoding="utf-8-sig")
+    print(f"\n상세 결과 저장: {OUTPUT_FILE}")
+
+    print("\n=== store별 평균 점수 ===")
+    summary = scored_df.groupby("store")[["faithfulness", "answer_relevancy"]].mean()
+    summary["avg_response_ms"] = scored_df.groupby("store")["server_elapsed_ms"].mean()
+    print(summary.round(3))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

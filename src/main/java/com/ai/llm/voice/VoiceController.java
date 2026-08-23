@@ -20,7 +20,7 @@ public class VoiceController {
     private final PdfTextExtractionService pdfTextExtractionService;
 
     public VoiceController(VoiceService voiceService,
-                            PdfTextExtractionService pdfTextExtractionService) {
+                           PdfTextExtractionService pdfTextExtractionService) {
         this.voiceService = voiceService;
         this.pdfTextExtractionService = pdfTextExtractionService;
     }
@@ -31,6 +31,16 @@ public class VoiceController {
     @PostMapping("/stt")
     public Map<String, Object> speechToText(@RequestParam("file") MultipartFile file) throws IOException {
         return voiceService.speechToText(file);
+    }
+
+    /**
+     * PDF/TXT 파일에서 텍스트만 추출해서 반환합니다.
+     * (실제 음성 생성 전에 웹 UI의 textarea에 미리 채워서 보여주는 용도)
+     */
+    @PostMapping(value = "/extract-text", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Map<String, String> extractText(@RequestParam("file") MultipartFile file) throws IOException {
+        String content = resolveText(null, file);
+        return Map.of("text", content == null ? "" : content);
     }
 
     /**
@@ -49,10 +59,12 @@ public class VoiceController {
             return ResponseEntity.badRequest().build();
         }
 
-        // TTS 엔진의 안정성을 위해 너무 긴 텍스트는 앞부분만 사용 (필요시 조정)
-        String truncated = content.length() > 1000 ? content.substring(0, 1000) : content;
+        // MeloTTS가 내부적으로 문장 단위(split_sentences_into_pieces)로 쪼개서
+        // 각각 합성한 뒤 하나로 이어붙이므로, 여기서 텍스트를 잘라낼 필요가 없습니다.
+        // 다만 지나치게 긴 문서(수만 자)는 처리 시간이 오래 걸릴 수 있어 안전장치로 상한만 넉넉히 둡니다.
+        String safeContent = content.length() > 20000 ? content.substring(0, 20000) : content;
 
-        byte[] audio = voiceService.textToSpeech(truncated);
+        byte[] audio = voiceService.textToSpeech(safeContent);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.parseMediaType("audio/wav"));

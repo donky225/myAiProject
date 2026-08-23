@@ -67,9 +67,26 @@ async def speech_to_text(file: UploadFile = File(...)):
         Path(input_path).unlink(missing_ok=True)
 
 
+import re
+import traceback
+
 class TtsRequest(BaseModel):
     text: str
     speed: float = 1.0
+
+
+# MeloTTS 한국어 g2p가 인식하지 못하는 특수문자(=, *, #, @ 등)를 만나면
+# KeyError로 죽는 문제가 있어, TTS로 보내기 전에 안전한 문자만 남기고 정리합니다.
+# 한글, 영문, 숫자, 기본 문장부호(.,!?:;'"()-~ 공백)는 유지하고 나머지는 공백으로 치환합니다.
+_SAFE_TEXT_PATTERN = re.compile(
+    r"[^가-힣ㄱ-ㅎㅏ-ㅣ0-9a-zA-Z.,!?:;'\"()\-~\s]"
+)
+
+
+def sanitize_for_tts(text: str) -> str:
+    cleaned = _SAFE_TEXT_PATTERN.sub(" ", text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
 
 
 @app.post("/tts")
@@ -78,12 +95,17 @@ async def text_to_speech(request: TtsRequest):
     if not request.text or not request.text.strip():
         raise HTTPException(status_code=400, detail="text가 비어있습니다.")
 
+    safe_text = sanitize_for_tts(request.text)
+    if not safe_text:
+        raise HTTPException(status_code=400, detail="TTS로 변환 가능한 텍스트가 없습니다 (특수문자만 존재).")
+
     output_path = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
 
     try:
-        tts_model.tts_to_file(request.text, tts_speaker_id, output_path, speed=request.speed)
+        tts_model.tts_to_file(safe_text, tts_speaker_id, output_path, speed=request.speed)
         return FileResponse(output_path, media_type="audio/wav", filename="speech.wav")
     except Exception as e:
+        traceback.print_exc()  # 콘솔에 전체 스택트레이스 출력 (원인 진단용)
         raise HTTPException(status_code=500, detail=str(e))
 
 
