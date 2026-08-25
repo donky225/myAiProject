@@ -372,6 +372,8 @@
                             if (micSocket && micSocket.readyState === WebSocket.OPEN) {
                                 micSocket.send(JSON.stringify({ type: 'end-of-utterance' }));
                             }
+                            // 발화 종료 즉시 오디오 캡처를 멈춥니다 (소켓은 답변을 받기 위해 유지).
+                            stopCapturingKeepSocket();
                         }
                         isSpeaking = false;
                         silenceStart = null;
@@ -394,6 +396,77 @@
         silenceStart = null;
     }
 
+    /**
+     * 발화 종료가 감지되면 호출됩니다. 오디오 캡처(마이크 스트림, VAD)는 멈추지만,
+     * 서버로부터 전사/답변/음성을 계속 받아야 하므로 WebSocket 연결은 유지합니다.
+     */
+    function stopCapturingKeepSocket() {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+        }
+        teardownVAD();
+
+        const micButton = document.getElementById('micButton');
+        const statusSpan = document.getElementById('wsStatus');
+        micButton.disabled = true;
+        micButton.textContent = '⏳ 처리 중...';
+        statusSpan.textContent = '답변 대기 중';
+        statusSpan.style.color = '#f80';
+        micActive = false;
+    }
+
+    /**
+     * 답변(텍스트+음성) 전송이 모두 끝나면 호출됩니다. 소켓과 마이크 스트림을 완전히 정리하고,
+     * 사용자가 다시 "마이크 시작"을 눌러야 다음 질문을 할 수 있는 상태로 되돌립니다.
+     */
+    function finishConversationTurn() {
+        if (micStream) {
+            micStream.getTracks().forEach(track => track.stop());
+            micStream = null;
+        }
+        if (micSocket) {
+            micSocket.close();
+            micSocket = null;
+        }
+
+        const micButton = document.getElementById('micButton');
+        const statusSpan = document.getElementById('wsStatus');
+        micButton.disabled = false;
+        micButton.textContent = '🎤 마이크 시작';
+        statusSpan.textContent = '연결 안 됨';
+        statusSpan.style.color = '#888';
+        logWs('대화 종료. 다시 질문하려면 "마이크 시작"을 눌러주세요.');
+    }
+
+    // ── 답변 음성 재생 큐: 문장별로 도착하는 오디오를 순서대로 이어서 재생 ──
+    let audioQueue = [];
+    let isPlayingAudio = false;
+
+    function enqueueAudio(base64Wav) {
+        const audioUrl = 'data:audio/wav;base64,' + base64Wav;
+        audioQueue.push(audioUrl);
+        if (!isPlayingAudio) {
+            playNextInQueue();
+        }
+    }
+
+    function playNextInQueue() {
+        if (audioQueue.length === 0) {
+            isPlayingAudio = false;
+            return;
+        }
+        isPlayingAudio = true;
+        const url = audioQueue.shift();
+        const audio = new Audio(url);
+        audio.onended = () => playNextInQueue();
+        audio.onerror = () => {
+            logWs('⚠️ 음성 재생 오류, 다음 문장으로 넘어갑니다');
+            playNextInQueue();
+        };
+        audio.play().catch(e => {
+            logWs('⚠️ 자동 재생이 차단되었습니다. 페이지를 한 번 클릭한 뒤 다시 시도해주세요.');
+        });
+    }
 
     async function toggleMic() {
         if (micActive) {
@@ -461,10 +534,15 @@
                     logWs('💬 문장 도착: ' + data.text);
                     const answerDiv = document.getElementById('wsAnswer');
                     answerDiv.textContent += (answerDiv.textContent ? ' ' : '') + data.text;
+                } else if (data.type === 'sentence_audio') {
+                    logWs('🔊 음성 도착: ' + data.text);
+                    enqueueAudio(data.audio);
                 } else if (data.type === 'answer_complete') {
                     logWs('✅ 답변 완료');
+                    finishConversationTurn();
                 } else if (data.type === 'error') {
                     logWs('❌ 서버 오류: ' + data.message);
+                    finishConversationTurn();
                 } else {
                     logWs('서버 응답: ' + event.data);
                 }

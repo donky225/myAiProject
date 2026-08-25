@@ -10,17 +10,22 @@ import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Base64;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 3~4단계: STT 전사 -> (필요시 웹 검색으로 실시간 정보 보강) -> LLM 스트리밍 답변 생성
- * -> 문장 단위로 즉시 클라이언트에 전송.
+ * 실시간 음성 대화 파이프라인 (최종 단계):
+ * 마이크 오디오 스트리밍 -> 무음 감지(VAD, 클라이언트) -> STT -> (필요시 웹 검색) ->
+ * LLM 스트리밍 -> 문장 단위 분리 -> 문장별 TTS 합성(비동기, 순서 보장) -> 브라우저 순차 재생.
  *
- * 검색 필요 여부는 짧은 판단용 LLM 호출로 먼저 결정합니다 (모델이 "SEARCH: 검색어"
- * 또는 "NONE"만 출력하도록 강하게 지시). 이후 실제 답변은 항상 스트리밍으로 생성합니다.
+ * 텍스트는 문장이 완성되는 즉시 전송하고, 그 문장의 음성 합성은 세션별 단일 스레드
+ * 실행기에서 순서를 지키며 백그라운드로 처리합니다. 이렇게 하면 LLM이 다음 문장을
+ * 계속 생성하는 동안 이전 문장의 TTS가 병렬로 진행되어 전체 체감 지연이 줄어듭니다.
  */
 @Component
 public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
@@ -29,6 +34,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     private static final Pattern SEARCH_PATTERN = Pattern.compile("SEARCH:\\s*(.+)", Pattern.CASE_INSENSITIVE);
 
     private final Map<String, ByteArrayOutputStream> audioBuffers = new ConcurrentHashMap<>();
+    // 세션별 단일 스레드 실행기: 문장이 생성된 순서대로 TTS가 처리/전송되도록 보장합니다.
+    private final Map<String, ExecutorService> ttsExecutors = new ConcurrentHashMap<>();
 
     private final VoiceService voiceService;
     private final OllamaService ollamaService;
@@ -46,6 +53,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) throws IOException {
         log.info("[WS] 연결됨: {}", session.getId());
         audioBuffers.put(session.getId(), new ByteArrayOutputStream());
+        ttsExecutors.put(session.getId(), Executors.newSingleThreadExecutor());
         sendJson(session, "connected", "음성 WebSocket 연결됨");
     }
 
@@ -98,7 +106,6 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         log.info("[WS] 전사 결과: \"{}\"", transcript);
         sendTranscript(session, transcript);
 
-        // 1) 검색이 필요한 질문인지 먼저 짧게 판단
         String searchQuery = decideSearchQuery(transcript);
 
         String finalPrompt;
@@ -114,21 +121,19 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                 searchResults = "";
             }
 
-            if (searchResults.isBlank()) {
-                finalPrompt = buildKoreanOnlyPrompt(transcript);
-            } else {
-                finalPrompt = """
-                        당신은 한국어로만 답변하는 어시스턴트입니다. 아래는 방금 검색한 최신 웹 검색 결과입니다.
-                        이 정보를 참고해서 사용자 질문에 정확하고 자연스러운 한국어로 답변하세요.
-                        검색 결과에 없는 내용은 추측하지 마세요.
+            finalPrompt = searchResults.isBlank()
+                    ? buildKoreanOnlyPrompt(transcript)
+                    : """
+                      당신은 한국어로만 답변하는 어시스턴트입니다. 아래는 방금 검색한 최신 웹 검색 결과입니다.
+                      이 정보를 참고해서 사용자 질문에 정확하고 자연스러운 한국어로 답변하세요.
+                      검색 결과에 없는 내용은 추측하지 마세요.
 
-                        [검색 결과]
-                        %s
+                      [검색 결과]
+                      %s
 
-                        [질문]
-                        %s
-                        """.formatted(searchResults, transcript);
-            }
+                      [질문]
+                      %s
+                      """.formatted(searchResults, transcript);
         } else {
             finalPrompt = buildKoreanOnlyPrompt(transcript);
         }
@@ -140,15 +145,12 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         return """
                 당신은 한국어로만 답변하는 어시스턴트입니다. 질문이 어떤 언어로 오든,
                 답변은 반드시 자연스러운 한국어로만 작성하세요. 영어나 다른 언어를 섞지 마세요.
+                문장을 짧고 명확하게 끊어서 말하듯이 답변하세요.
 
                 질문: %s
                 """.formatted(question);
     }
 
-    /**
-     * 짧은 판단용 호출로 웹 검색이 필요한지 확인합니다.
-     * 필요하면 검색어 문자열을, 필요 없으면 null을 반환합니다.
-     */
     private String decideSearchQuery(String question) {
         String routingPrompt = """
                 아래 질문에 정확히 답하려면 실시간/최신 정보(예: 오늘 날짜 기준 날씨, 최근 뉴스,
@@ -189,7 +191,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                 while (endIdx != -1) {
                     String sentence = sentenceBuffer.substring(0, endIdx + 1).trim();
                     if (!sentence.isBlank()) {
-                        sendSentenceSafely(session, sentence);
+                        flushSentence(session, sentence);
                     }
                     sentenceBuffer.delete(0, endIdx + 1);
                     endIdx = findSentenceEnd(sentenceBuffer);
@@ -203,11 +205,21 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
 
         String remaining = sentenceBuffer.toString().trim();
         if (!remaining.isBlank()) {
-            sendSentenceSafely(session, remaining);
+            flushSentence(session, remaining);
         }
 
-        sendJson(session, "answer_complete", null);
-        log.info("[WS] 답변 스트리밍 완료: session={}", session.getId());
+        // 마지막 문장까지 TTS가 끝난 뒤 완료 신호를 보내도록, 같은 순서 큐에 완료 신호도 넣습니다.
+        ExecutorService executor = ttsExecutors.get(session.getId());
+        if (executor != null) {
+            executor.submit(() -> {
+                try {
+                    sendJson(session, "answer_complete", null);
+                    log.info("[WS] 답변 스트리밍 및 음성 합성 완료: session={}", session.getId());
+                } catch (IOException e) {
+                    log.error("[WS] 완료 신호 전송 실패", e);
+                }
+            });
+        }
     }
 
     private int findSentenceEnd(StringBuilder buffer) {
@@ -220,16 +232,42 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         return -1;
     }
 
-    private void sendSentenceSafely(WebSocketSession session, String sentence) {
+    /**
+     * 문장 텍스트는 즉시 전송하고, 그 문장의 TTS 음성 합성은
+     * 세션 전용 단일 스레드 실행기에 맡겨 순서를 지키며 백그라운드로 처리합니다.
+     */
+    private void flushSentence(WebSocketSession session, String sentence) {
+        log.info("[WS] 문장 완성: \"{}\"", sentence);
         try {
-            log.info("[WS] 문장 완성: \"{}\"", sentence);
-            String json = String.format("{\"type\":\"sentence\",\"text\":\"%s\"}", escape(sentence));
+            String textJson = String.format("{\"type\":\"sentence\",\"text\":\"%s\"}", escape(sentence));
             if (session.isOpen()) {
-                session.sendMessage(new TextMessage(json));
+                session.sendMessage(new TextMessage(textJson));
             }
         } catch (IOException e) {
-            log.error("[WS] 문장 전송 실패", e);
+            log.error("[WS] 문장 텍스트 전송 실패", e);
         }
+
+        ExecutorService executor = ttsExecutors.get(session.getId());
+        if (executor == null || executor.isShutdown()) return;
+
+        executor.submit(() -> {
+            try {
+                byte[] audioBytes = voiceService.textToSpeech(sentence);
+                String base64Audio = Base64.getEncoder().encodeToString(audioBytes);
+
+                String audioJson = String.format(
+                        "{\"type\":\"sentence_audio\",\"text\":\"%s\",\"audio\":\"%s\"}",
+                        escape(sentence), base64Audio
+                );
+
+                if (session.isOpen()) {
+                    session.sendMessage(new TextMessage(audioJson));
+                }
+                log.info("[WS] 문장 음성 합성 완료 및 전송: \"{}\" ({} bytes)", sentence, audioBytes.length);
+            } catch (Exception e) {
+                log.error("[WS] 문장 TTS 합성 실패: \"{}\"", sentence, e);
+            }
+        });
     }
 
     private void sendJson(WebSocketSession session, String type, String message) throws IOException {
@@ -254,6 +292,11 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         log.info("[WS] 연결 종료: {} (status={})", session.getId(), status);
         audioBuffers.remove(session.getId());
+
+        ExecutorService executor = ttsExecutors.remove(session.getId());
+        if (executor != null) {
+            executor.shutdown();
+        }
     }
 
     @Override
