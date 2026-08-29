@@ -10,11 +10,11 @@
 # stop-all.ps1(또는 이 문서 하단의 종료 명령)을 사용하세요.
 
 Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host " 1/3. 메인 인프라 기동 (OpenSearch / PostgreSQL+pgvector / Ollama)" -ForegroundColor Cyan
+Write-Host " 1/3. 메인 인프라 기동 (OpenSearch / PostgreSQL+pgvector / Ollama / Kafka / Redis)" -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 
 Set-Location "D:\MyAiProject"
-docker compose up -d opensearch postgres ollama ollama-init
+docker compose up -d opensearch postgres ollama ollama-init kafka redis
 
 Write-Host ""
 Write-Host "==================================================" -ForegroundColor Cyan
@@ -51,7 +51,11 @@ Write-Host "  docker ps"
 Write-Host "  curl.exe http://localhost:8001/health        (음성 서버)"
 Write-Host "  curl.exe http://localhost:7860                (Stable Diffusion WebUI, 브라우저로 접속 권장)"
 Write-Host "  curl.exe http://localhost:9200/_cluster/health (OpenSearch)"
+Write-Host "  docker logs local-kafka --tail 20          (Kafka - 에러 없이 기동됐는지)"
+Write-Host "  docker exec -it local-redis redis-cli ping (Redis - PONG이 나오면 정상)"
 Write-Host ""
 Write-Host "Spring Boot 앱까지 뜨면 http://localhost:8080 에서 전체 기능을 사용할 수 있습니다."
+Write-Host "비동기 문서 업로드(Kafka)는 POST /api/documents/async/upload 로 테스트하세요."
+Write-Host "동일 질문 반복 시 Redis 캐시가 적용되어 두 번째 호출부터는 즉시 응답합니다."
 
 Set-Location "D:\MyAiProject"
