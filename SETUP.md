@@ -19,9 +19,10 @@
 9. [비동기 문서 인제스트 (Kafka)](#9-비동기-문서-인제스트-kafka)
 10. [응답 캐싱 (Redis)](#10-응답-캐싱-redis)
 11. [Python 평가 환경 (RAGAS)](#11-python-평가-환경-ragas)
-12. [전체 한 번에 실행하기](#12-전체-한-번에-실행하기)
-13. [클라우드 배포 (GCP)](#13-클라우드-배포-gcp)
-14. [자주 겪는 오류와 해결법 총정리](#14-자주-겪는-오류와-해결법-총정리)
+12. [QLoRA 로컬 파인튜닝 환경 (Unsloth)](#12-qlora-로컬-파인튜닝-환경-unsloth)
+13. [전체 한 번에 실행하기](#13-전체-한-번에-실행하기)
+14. [클라우드 배포 (GCP)](#14-클라우드-배포-gcp)
+15. [자주 겪는 오류와 해결법 총정리](#15-자주-겪는-오류와-해결법-총정리)
 
 ---
 
@@ -354,7 +355,158 @@ print(df.groupby('store')[['answer_relevancy']].mean().round(3))
 
 ---
 
-## 12. 전체 한 번에 실행하기
+## 12. QLoRA 로컬 파인튜닝 환경 (Unsloth)
+
+RTX 3060 6GB VRAM에서 Unsloth로 `Qwen3-4B`를 QLoRA(4bit) 파인튜닝하고 GGUF로 변환해 Ollama에 등록하는 환경입니다. 목적은 도메인 특화가 아닌 QLoRA 기법 자체의 시연이며, 공개 데이터셋(`yahma/alpaca-cleaned`)을 사용합니다.
+
+> **환경을 WSL2 Ubuntu로 분리하는 이유**: Windows 네이티브에서도 Unsloth가 동작은 하지만, `bitnami/kafka` 이미지 문제처럼 `bitsandbytes`/`triton` 계열 패키지가 리눅스 기준으로 빌드·배포되는 경우가 많아 Windows에서 설치 실패가 잦습니다. WSL2 + conda 조합이 가장 안정적입니다.
+
+### 12.1 WSL2 Ubuntu 설치 확인 및 준비
+
+Docker Desktop이 쓰는 `docker-desktop` WSL 인스턴스와 일반 작업용 Ubuntu는 별개입니다. 확인:
+
+```powershell
+wsl -l -v
+```
+
+`Ubuntu`가 목록에 없다면 새로 설치:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+설치 중 유닉스 사용자명/비밀번호를 설정합니다. 완료 후:
+
+```powershell
+wsl -d Ubuntu
+```
+
+GPU 인식 확인 (Docker Desktop의 WSL2 GPU 연동이 이미 돼 있어 드라이버 재설치 없이 바로 되는 경우가 대부분):
+
+```bash
+nvidia-smi
+```
+RTX 3060, VRAM 6144MiB 정도가 출력되면 정상입니다.
+
+### 12.2 Miniconda 설치 (Python 3.11 격리 환경)
+
+WSL Ubuntu의 시스템 기본 Python이 3.14처럼 최신 버전이면 `bitsandbytes`/`unsloth` 생태계와 호환이 안 될 수 있습니다. `deadsnakes` PPA로 3.11을 받으려 해도 최신 Ubuntu 배포판엔 아직 패키지가 없는 경우가 있어(15.20 참고), Miniconda로 격리하는 게 가장 안정적입니다.
+
+```bash
+cd ~
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3
+```
+
+`-b -p` 옵션으로 라이선스 동의 등 모든 대화형 프롬프트를 건너뛰고 자동 설치합니다(대화형으로 진행 시 중간에 다른 명령이 섞이면 설치가 조용히 실패하는 경우가 있었음 — 15.21 참고).
+
+```bash
+~/miniconda3/bin/conda init bash
+source ~/.bashrc
+conda --version
+```
+
+**주의**: `conda init` 직후에는 반드시 `source ~/.bashrc`로 재로드하거나 터미널을 완전히 새로 열어야 `conda` 명령이 인식됩니다.
+
+Anaconda 채널 이용약관(ToS) 동의가 필요할 수 있습니다 (15.22 참고):
+```bash
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+```
+
+conda 환경 생성:
+```bash
+conda create -n qlora python=3.11 -y
+conda activate qlora
+python --version   # Python 3.11.x 확인
+```
+
+### 12.3 PyTorch(CUDA) 및 Unsloth 설치
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+`True`와 GPU 이름이 나와야 정상입니다.
+
+```bash
+sudo apt update
+sudo apt install build-essential -y   # gcc — Triton 커널 컴파일에 필수 (15.19 참고)
+pip install unsloth
+```
+
+설치 검증 겸 실제 4bit 모델 로드까지 확인:
+```bash
+python -c "
+from unsloth import FastLanguageModel
+import torch
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name='unsloth/Qwen3-4B-unsloth-bnb-4bit',
+    max_seq_length=1024,
+    load_in_4bit=True,
+)
+print('모델 로드 성공, VRAM(GB):', torch.cuda.memory_allocated()/1024**3)
+"
+```
+6GB 중 3~4GB대로 로드되면 정상입니다.
+
+### 12.4 학습 실행
+
+`train_qlora.py`를 프로젝트 폴더(`~/qlora-project`)에 배치 (Windows에서 다운로드한 경우 `/mnt/c/Users/<사용자명>/Downloads/train_qlora.py`에서 `cp`로 복사).
+
+```bash
+cd ~/qlora-project
+pip install trl datasets
+python train_qlora.py            # 짧은 시험 학습 (기본, 10 step)
+QUICK_TEST=0 python train_qlora.py  # 본 학습 (200 step, 15~20분 내외 — GGUF 변환의 최초 원본 모델 재다운로드 포함)
+```
+
+**핵심 설계 포인트 (15.24, 15.27 트러블슈팅과 직결)**: 학습 데이터 포맷은 반드시 `tokenizer.apply_chat_template()`로 Qwen3 고유 ChatML 포맷을 사용해야 합니다. Alpaca 원본의 `### 지시사항:` 포맷으로 학습하면 Ollama 서빙 시 사용되는 ChatML 템플릿과 불일치해 무한 반복 생성이 발생할 수 있습니다.
+
+### 12.5 GGUF 변환 및 Ollama 등록
+
+`train_qlora.py`의 본 학습(`QUICK_TEST=0`)이 완료되면 자동으로 GGUF 변환까지 진행됩니다 (`qwen3-4b-qlora-demo_gguf/` 폴더에 `.gguf`와 `Modelfile` 생성).
+
+WSL → Windows로 결과물 복사 (Ollama가 Windows 네이티브에서 서비스 중이므로):
+```bash
+cp -r qwen3-4b-qlora-demo_gguf /mnt/c/Users/<사용자명>/qwen3-4b-qlora-demo_gguf
+```
+
+Modelfile의 `repeat_penalty`를 반드시 확인/수정 (기본값 `1`은 반복 억제가 꺼진 상태 — 15.24 참고):
+```bash
+sed -i 's/PARAMETER repeat_penalty 1/PARAMETER repeat_penalty 1.15/' /mnt/c/Users/<사용자명>/qwen3-4b-qlora-demo_gguf/Modelfile
+```
+
+PowerShell에서 등록:
+```powershell
+cd C:\Users\<사용자명>\qwen3-4b-qlora-demo_gguf
+ollama create qwen3-4b-qlora-demo -f .\Modelfile
+ollama run qwen3-4b-qlora-demo "테스트 질문"
+```
+
+### 12.6 Before/After 비교 (베이스 모델과 공정 비교)
+
+Qwen3 계열은 SYSTEM 프롬프트로 한국어를 강제해도 내부 thinking 채널까지는 통제되지 않아 영어로 새어나올 수 있습니다 (15.27 참고). 비교 시 두 모델 모두 동일 조건으로 맞추는 걸 권장합니다.
+
+베이스 모델용 한국어 강제 Modelfile 생성:
+```powershell
+@"
+FROM qwen3:4b
+SYSTEM 항상 한국어로만 답변하세요. 영어를 절대 사용하지 마세요.
+"@ | Out-File -Encoding utf8 Modelfile-base-ko -NoNewline
+
+ollama create qwen3-4b-ko -f .\Modelfile-base-ko
+```
+
+비교 실행 (thinking 노출 억제):
+```powershell
+ollama run qwen3-4b-ko --hidethinking "질문"
+ollama run qwen3-4b-qlora-demo "질문"
+```
+
+---
+
+## 13. 전체 한 번에 실행하기
 
 `start-all.ps1`, `stop-all.ps1`을 `D:\MyAiProject`에 저장:
 ```powershell
@@ -367,27 +519,27 @@ Docker 인프라(OpenSearch/pgvector/Ollama/Kafka/Redis), Stable Diffusion, 음�
 
 ---
 
-## 13. 클라우드 배포 (GCP)
+## 14. 클라우드 배포 (GCP)
 
 경량화된 버전(OpenSearch/Stable Diffusion/음성 파이프라인 제외, pgvector+Ollama(CPU)+Spring Boot만)을 GCP 무료 체험으로 배포하는 절차입니다.
 
-### 13.1 GCP 가입
+### 14.1 GCP 가입
 https://cloud.google.com/free 에서 가입 ($300 크레딧, 90일). Oracle Cloud Always Free도 대안이지만, 가입 심사가 매우 까다로워(VPN/카드/전화번호 등) 실패하는 경우가 흔합니다.
 
-### 13.2 VM 인스턴스 생성
+### 14.2 VM 인스턴스 생성
 - 리전: `asia-northeast3` (서울)
 - 머신: E2 시리즈, `e2-standard-4` (vCPU 4, RAM 16GB)
 - OS: Ubuntu 22.04 LTS, 디스크 50GB
 - 방화벽: HTTP/HTTPS 트래픽 허용 체크
 
-### 13.3 방화벽 규칙 추가 (앱 포트)
+### 14.3 방화벽 규칙 추가 (앱 포트)
 `VPC 네트워크 → 방화벽 → 방화벽 규칙 만들기` (Compute Engine 메뉴가 아닌 별도 메뉴입니다):
 - 이름: `allow-8080`
 - 대상: 네트워크의 모든 인스턴스
 - 소스 IPv4 범위: `0.0.0.0/0`
 - 프로토콜/포트: TCP, `8080`
 
-### 13.4 서버에 Docker 설치
+### 14.4 서버에 Docker 설치
 SSH 접속(콘솔의 "SSH" 버튼으로 브라우저에서 바로 접속 가능) 후:
 ```bash
 sudo apt update
@@ -397,7 +549,7 @@ sudo usermod -aG docker $USER
 # 이후 SSH 재접속 필요
 ```
 
-### 13.5 프로젝트 배포
+### 14.5 프로젝트 배포
 ```bash
 git clone <저장소 URL> myaiproject
 cd myaiproject
@@ -455,27 +607,27 @@ docker logs rag-app --tail 50
 
 ---
 
-## 14. 자주 겪는 오류와 해결법 총정리
+## 15. 자주 겪는 오류와 해결법 총정리
 
-### 14.1 `Connection refused` (인프라 포트)
+### 15.1 `Connection refused` (인프라 포트)
 컨테이너 미기동 또는 볼륨 충돌. `docker ps` 확인 후 개별 기동.
 
-### 14.2 PowerShell `curl` 이상 동작
+### 15.2 PowerShell `curl` 이상 동작
 `curl.exe`로 명시 호출, 한글/공백은 `-G --data-urlencode` 사용.
 
-### 14.3 OpenSearch `Field 'embedding' is not knn_vector type`
+### 15.3 OpenSearch `Field 'embedding' is not knn_vector type`
 인덱스 삭제 후 매핑 없이 재생성됨. 매핑을 먼저 지정해 재생성 (README 참고).
 
-### 14.4 pgvector 검색 결과가 항상 비어있음
+### 15.4 pgvector 검색 결과가 항상 비어있음
 OpenSearch 임계값(0.55)을 그대로 적용하면 안 됨. pgvector 전용 낮은 임계값(0.25) 적용.
 
-### 14.5 `pkg_resources` / `unidic download` / `eunjeon` 빌드 오류
+### 15.5 `pkg_resources` / `unidic download` / `eunjeon` 빌드 오류
 각각 `setuptools<81` 고정, `unidic-lite`로 우회, Visual C++ Build Tools 설치로 해결 (7장 참고).
 
-### 14.6 `faster-whisper`의 `cublas64_12.dll` 오류
+### 15.6 `faster-whisper`의 `cublas64_12.dll` 오류
 CUDA 툴킷 미설치. `device="cpu"`로 설정 (small 모델은 CPU도 충분).
 
-### 14.7 GCP 서버에서 앱이 기동조차 안 됨 (`OpenSearchIndexInitializer`)
+### 15.7 GCP 서버에서 앱이 기동조차 안 됨 (`OpenSearchIndexInitializer`)
 **원인**: `@PostConstruct`가 OpenSearch 연결 실패 시 예외를 던져 Spring 컨텍스트 전체가 기동 실패.
 **해결**: 아래처럼 바깥쪽 try-catch로 감싸 연결 실패를 경고 로그로만 남기고 넘어가도록 수정:
 ```java
@@ -493,32 +645,32 @@ public void createIndexIfNotExists() {
 }
 ```
 
-### 14.8 `bitnami/kafka:3.7` 이미지를 찾을 수 없음
+### 15.8 `bitnami/kafka:3.7` 이미지를 찾을 수 없음
 Bitnami 무료 태그 정책 변경으로 구버전 삭제. **공식 `apache/kafka:latest`로 전환**.
 
-### 14.9 Kafka `KafkaTemplate` 빈을 찾을 수 없음
+### 15.9 Kafka `KafkaTemplate` 빈을 찾을 수 없음
 Boot 자동 생성 템플릿이 와일드카드(`<?,?>`) 타입이라 구체 제네릭 타입(`KafkaTemplate<String, DocumentIngestionEvent>`)과 불일치. `ProducerFactory`/`KafkaTemplate`을 정확한 타입으로 직접 빈 등록.
 
-### 14.10 Kafka Consumer Group이 생성되지 않음 (`GroupIdNotFoundException`)
+### 15.10 Kafka Consumer Group이 생성되지 않음 (`GroupIdNotFoundException`)
 **원인**: `@KafkaListener`는 인식되지만 리스너 컨테이너 자체가 기동 안 됨 (콘솔에 Producer 로그만 있고 Consumer 로그가 전혀 없는 게 증거).
 **해결**: `@Configuration` 클래스에 **`@EnableKafka`** 추가. 이게 없으면 어노테이션만 있고 실제로는 아무 것도 동작 안 함.
 
-### 14.11 Oracle Cloud 가입 반복 실패
+### 15.11 Oracle Cloud 가입 반복 실패
 VPN 끄기, 시크릿 모드, 전화번호/카드 정보 재확인. 반복 실패 시 GCP 무료 체험으로 전환 추천.
 
-### 14.12 GCP 방화벽 메뉴를 못 찾음
+### 15.12 GCP 방화벽 메뉴를 못 찾음
 Compute Engine 메뉴 안에 없고 **VPC 네트워크 → 방화벽**(별도 최상위 메뉴)에 있습니다. 검색이 안 되면 URL로 직접 이동: `console.cloud.google.com/networking/firewalls/list`
 
-### 14.13 실시간 대화가 계속 영어로 응답
+### 15.13 실시간 대화가 계속 영어로 응답
 프롬프트에 "한국어로만 답하라"는 지시문 명시적으로 포함.
 
-### 14.14 마이크 발화 중 요청이 여러 번 겹침
+### 15.14 마이크 발화 중 요청이 여러 번 겹침
 발화 종료 감지 즉시 오디오 캡처만 중단(소켓 유지) → 답변 완료 후 완전 종료하는 "한 번에 한 질문" 흐름으로 변경.
 
-### 14.15 `index.html` 수정이 재시작 없이는 반영 안 됨
+### 15.15 `index.html` 수정이 재시작 없이는 반영 안 됨
 `spring-boot-devtools` 추가로 라이브 리로드 활성화 (5장 참고).
 
-### 14.16 RAGAS 평가가 항목마다 정확히 timeout(600초)에 걸려 전부 실패
+### 15.16 RAGAS 평가가 항목마다 정확히 timeout(600초)에 걸려 전부 실패
 **증상**: 진행률 바에서 매 항목이 정확히 600.01초에 `TimeoutError()`를 던짐. 소요 시간에 편차가 없다는 것이 단순히 "느린" 게 아니라 요청이 아예 응답을 못 받고 멈춘(hang) 상태라는 신호입니다.
 **진단 순서**: PowerShell에서 `Invoke-RestMethod`로 Ollama의 `/api/chat`, `/api/embed`를 직접 호출해 개별 호출 자체는 정상(수십 초 이내)인지 먼저 확인. 개별 호출은 정상인데 RAGAS를 통하면 멈춘다면 RAGAS/LangChain의 비동기 실행 레이어 문제로 좁혀집니다.
 **원인**: Windows 기본 `ProactorEventLoop`가 `langchain_ollama`의 비동기 HTTP 클라이언트와 충돌해, 요청이 실제로는 응답을 받고도 콜백이 걸리지 않고 무한 대기.
@@ -531,17 +683,85 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 ```
 
-### 14.17 `evaluate_ragas.py` 실행 시 `KeyError: 'faithfulness'`
+### 15.17 `evaluate_ragas.py` 실행 시 `KeyError: 'faithfulness'`
 **원인**: `evaluate()` 호출의 `metrics=[]`에는 `AnswerRelevancy()`만 넣어놓고, 마지막 summary 집계 코드에는 `["faithfulness", "answer_relevancy"]` 두 컬럼을 그대로 참조해 컬럼 불일치 발생.
 **해결**: 둘 중 하나로 통일. `faithfulness`를 실제로 채점하지 않는다면 summary 쪽에서도 제거:
 ```python
 summary = scored_df.groupby("store")[["answer_relevancy"]].mean()
 ```
 
-### 14.18 venv 미활성화 상태로 실행 시 엉뚱한 `ModuleNotFoundError`
+### 15.18 venv 미활성화 상태로 실행 시 엉뚱한 `ModuleNotFoundError`
 **증상**: `ModuleNotFoundError: No module named 'langchain_community.chat_models.vertexai'` 등, 분명 설치했는데 없다는 에러.
 **원인**: 프롬프트에 `(rag-eval-env)`가 안 붙어 있는 상태 — 즉 venv가 활성화되지 않아 시스템 전역 Python의 site-packages(버전 조합이 안 맞는)를 참조.
 **해결**: `.\rag-eval-env\Scripts\Activate.ps1`로 venv부터 활성화 후 재실행. 에러 스택의 파일 경로가 `...\rag-eval-env\...`가 아니라 `...\AppData\Local\Programs\Python\...`이면 venv 미활성화가 확실합니다.
+
+### 15.19 QLoRA 학습 중 Triton 커널 컴파일 실패 (`RuntimeError: Failed to find C compiler`)
+**증상**: `train_qlora.py` 실행 중 `triton/runtime/build.py`에서 `Failed to find C compiler. Please specify via CC environment variable` 에러로 학습이 0%에서 멈춤.
+**원인**: WSL2 Ubuntu에 gcc 등 C 컴파일러가 설치되어 있지 않아, Triton이 GPU 커널(RMSNorm 등)을 런타임에 컴파일하지 못함.
+**해결**:
+```bash
+sudo apt update
+sudo apt install build-essential -y
+gcc --version  # 확인
+```
+
+### 15.20 최신 Ubuntu에서 `deadsnakes` PPA로 Python 3.11 설치 실패
+**증상**: `add-apt-repository ppa:deadsnakes/ppa` 실행 후 `apt update`를 해도 저장소가 추가된 흔적이 없고, `python3.11`을 찾을 수 없음.
+**원인**: WSL Ubuntu 배포판이 최신 버전(예: `resolute`)일 경우, deadsnakes PPA가 아직 해당 코드네임용 패키지를 제공하지 않을 수 있음.
+**해결**: apt/PPA로 씨름하지 말고 Miniconda로 격리된 Python 3.11 환경 구성 (12.2 참고).
+
+### 15.21 Miniconda 설치가 조용히 실패 (`~/miniconda3` 폴더 자체가 생성 안 됨)
+**증상**: 설치 스크립트가 끝난 것처럼 보였는데 `conda: command not found`, `ls ~/miniconda3` 결과 `No such file or directory`.
+**원인**: 대화형(라이선스 동의, 경로 확인 등 프롬프트 입력) 설치 도중 다른 명령이 섞여 들어가면서 설치가 중간에 끊긴 것으로 추정.
+**해결**: 배치 모드(`-b -p`)로 모든 대화형 프롬프트를 건너뛰고 재설치. 설치 명령 실행 후에는 완전히 끝날 때까지 다른 명령을 입력하지 않아야 함:
+```bash
+bash ~/Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3
+```
+
+### 15.22 `conda create` 시 `CondaToSNonInteractiveError`
+**증상**: `conda create -n qlora python=3.11 -y` 실행 시 `Terms of Service have not been accepted` 에러.
+**원인**: 최근 Anaconda 정책 변경으로 `pkgs/main`, `pkgs/r` 채널의 이용약관 동의가 선행되어야 함.
+**해결**:
+```bash
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+```
+
+### 15.23 여러 터미널(PowerShell/Git Bash/WSL) 혼동으로 명령이 엉뚱하게 실행됨
+**증상**: 분명 WSL에서 작업 중인 줄 알았는데 `PS C:\...>`나 `MINGW64` 프롬프트에서 명령이 실행되어 엉뚱한 Python/패키지 경로를 참조하거나, `sudo` 인증 실패, 명령이 이전 입력과 겹쳐 붙는 등의 증상이 발생.
+**원인**: WSL Ubuntu, PowerShell, Git Bash가 서로 다른 파일시스템·패키지 환경을 가지는데 터미널 창을 오가며 작업하다 보니 어느 셸에 있는지 놓침.
+**해결**: 프롬프트 형태로 항상 구분. WSL Ubuntu는 `(qlora) choi@DESKTOP-...:~/qlora-project$`, PowerShell은 `PS C:\...>`, Git Bash는 `MINGW64` 표시. 명령이 이상하게 합쳐져 실행되면(`unslothpip` 등) `Ctrl+U`로 줄을 비우고 붙여넣기는 `Ctrl+Shift+V` 사용.
+
+### 15.24 GGUF 모델이 추론 시 같은 문구를 무한 반복
+**증상**: `ollama run`으로 파인튜닝 모델을 실행하면 "적절히 지시하는 작업을 적절히..." 처럼 같은 구절이 끝없이 반복됨.
+**원인**: 두 가지가 겹침 — ① Unsloth가 자동 생성한 Modelfile의 `PARAMETER repeat_penalty`가 `1`(반복 억제 없음)로 설정됨. ② 학습 시 사용한 Alpaca 원본 포맷(`### 지시사항: ... ### 응답:`)이 Ollama Modelfile의 실제 서빙 템플릿(Qwen3 ChatML, `<|im_start|>...<|im_end|>`)과 달라, 모델이 언제 답변을 멈춰야 하는지에 대한 신호가 학습 때와 추론 때 어긋남.
+**해결**: `repeat_penalty`를 `1.15` 정도로 조정하고, 학습 데이터 포맷을 `tokenizer.apply_chat_template()`로 Qwen3 ChatML과 일치시켜 재학습 (12.4 참고).
+
+### 15.25 Ollama Modelfile에 `PARAMETER think false` 추가 시 `Error: unknown parameter 'think'`
+**증상**: Modelfile에 thinking 비활성화를 고정하려고 `PARAMETER think false`를 추가하면 `ollama create`가 에러를 냄.
+**원인**: thinking on/off는 Modelfile의 `PARAMETER`로 지원되는 옵션이 아님.
+**해결**: 해당 줄 제거. 대신 실행 시점에 `ollama run 모델명 --think=false` 또는 `--hidethinking` 플래그로 제어.
+
+### 15.26 PowerShell에서 메모장으로 만든 Modelfile을 `ollama create`가 못 찾음
+**증상**: `ollama create -f .\Modelfile-base-ko` 실행 시 `Error: no Modelfile or safetensors files found`.
+**원인**: 메모장이 저장 시 자동으로 `.txt` 확장자를 붙여 실제 파일명이 `Modelfile-base-ko.txt`가 됨.
+**해결**:
+```powershell
+dir Modelfile-base-ko*   # 실제 파일명 확인
+Rename-Item Modelfile-base-ko.txt Modelfile-base-ko
+```
+또는 애초에 PowerShell에서 직접 생성해 확장자 문제 회피:
+```powershell
+@"
+FROM qwen3:4b
+SYSTEM 항상 한국어로만 답변하세요.
+"@ | Out-File -Encoding utf8 Modelfile-base-ko -NoNewline
+```
+
+### 15.27 SYSTEM 프롬프트로 한국어를 강제해도 `<think>` 블록만 영어로 나옴
+**증상**: `SYSTEM 항상 한국어로만 답변하세요`를 지정해도 최종 답변은 한국어인데 `<think>...</think>` 내부 추론 과정은 전부 영어로 생성됨.
+**원인**: Qwen3 계열 모델은 SYSTEM 프롬프트가 최종 출력 언어에는 적용되지만, 내부 thinking 채널까지는 강제하지 못하는 것으로 관찰됨.
+**해결**: thinking 자체를 끄거나(`--think=false`) 화면 노출만 차단(`--hidethinking`). 정확한 비교 실험이 필요하면 두 방식 중 하나로 통일해 조건을 맞출 것.
 
 ---
 
@@ -550,7 +770,7 @@ summary = scored_df.groupby("store")[["answer_relevancy"]].mean()
 ```
 D:\MyAiProject\
 ├── src\main\java\com\ai\llm\
-│   ├── rag\             # RagService, PgVectorRagService, RagController(+캐시)
+│   ├── rag\            # RagService, PgVectorRagService, RagController(+캐시)
 │   ├── pgvector\        # PgVectorService, PgVectorIngestService, OCR 서비스
 │   ├── opensearch\      # OpenSearchService, OpenSearchIndexInitializer
 │   ├── ollama\          # OllamaService(생성/스트리밍), 프롬프트 번역
@@ -567,6 +787,12 @@ D:\MyAiProject\
 ├── voice-pipeline\       # STT/TTS Python 서버
 ├── start-all.ps1 / stop-all.ps1
 └── start.sh / stop.sh    # Git Bash용
+
+(WSL2 Ubuntu 내부, Windows와 별도)
+~/qlora-project\               # QLoRA 파인튜닝 작업 폴더 (conda env: qlora, Python 3.11)
+├── train_qlora.py
+├── qwen3-4b-qlora-alpaca\     # LoRA 어댑터 (시험/본 학습 결과)
+└── qwen3-4b-qlora-demo_gguf\  # GGUF 변환 결과 + Ollama Modelfile (Windows로 복사 후 등록)
 
 D:\stable-diffusion-webui-docker\   # 별도 저장소
 ```

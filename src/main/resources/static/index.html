@@ -89,7 +89,46 @@
 <div id="ttsLoading" style="display:none; color:#888;">음성 생성 중... (텍스트가 길면 오래 걸릴 수 있습니다)</div>
 <div id="ttsResult"></div>
 
+<h2>RAG vs 순수 LLM 비교</h2>
+<input type="text" id="compareQuestion" placeholder="질문을 입력하세요" />
+<button onclick="compare()">두 방식으로 질문</button>
+<div id="loadingCompare" style="display:none; color:#888;">답변 생성 중...</div>
+
+<div style="display:flex; gap:16px; margin-top:12px;">
+    <div style="flex:1;">
+        <strong>RAG 답변 (문서 근거)</strong>
+        <div id="ragAnswer" style="white-space:pre-wrap; background:#eef6ff; padding:12px; border-radius:6px; min-height:60px;"></div>
+    </div>
+    <div style="flex:1;">
+        <strong>순수 LLM 답변 (자체 지식)</strong>
+        <div id="llmAnswer" style="white-space:pre-wrap; background:#fff5ee; padding:12px; border-radius:6px; min-height:60px;"></div>
+    </div>
+</div>
+
+
 <script>
+    async function compare() {
+        const question = document.getElementById('compareQuestion').value;
+        if (!question) return;
+
+        document.getElementById('loadingCompare').style.display = 'block';
+        document.getElementById('ragAnswer').textContent = '';
+        document.getElementById('llmAnswer').textContent = '';
+
+        try {
+            const [ragRes, llmRes] = await Promise.all([
+                fetch('/api/rag/ask?question=' + encodeURIComponent(question)),
+                fetch('/api/chat/ask?question=' + encodeURIComponent(question))
+            ]);
+            document.getElementById('ragAnswer').textContent = await ragRes.text();
+            document.getElementById('llmAnswer').textContent = await llmRes.text();
+        } catch (e) {
+            document.getElementById('ragAnswer').textContent = '오류: ' + e.message;
+        } finally {
+            document.getElementById('loadingCompare').style.display = 'none';
+        }
+    }
+
     let asking = false;
 
     async function ask() {
