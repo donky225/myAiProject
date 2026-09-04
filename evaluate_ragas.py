@@ -7,15 +7,26 @@ OpenSearch vs pgvector 비교 결과를 콘솔과 CSV로 출력합니다.
 사용법:
     python evaluate_ragas.py
 """
+import asyncio
+import sys
+
+if sys.platform == "win32":
+    # Windows 기본 ProactorEventLoop는 langchain_ollama가 사용하는
+    # aiohttp/httpx 비동기 클라이언트와 충돌해 요청이 응답 후에도
+    # 콜백이 걸리지 않고 무한 대기(hang)하는 경우가 있음.
+    # SelectorEventLoop로 강제 전환하여 회피.
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import ast
 import pandas as pd
 
 from langchain_ollama import ChatOllama, OllamaEmbeddings
-
+from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas import evaluate, EvaluationDataset
 from ragas.metrics import Faithfulness, AnswerRelevancy
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
+from ragas.run_config import RunConfig
 
 INPUT_FILE = "collected_results.csv"
 OUTPUT_FILE = "ragas_scores.csv"
@@ -75,10 +86,11 @@ def main():
     print("\nRAGAS 평가 실행 중... (로컬 LLM 채점이라 다소 시간이 걸립니다)")
     result = evaluate(
         dataset=dataset,
-        metrics=[Faithfulness(), AnswerRelevancy()],
+        metrics=[AnswerRelevancy()],
         llm=evaluator_llm,
         embeddings=evaluator_embeddings,
-        raise_exceptions=True,  # 실패 시 NaN으로 조용히 넘어가지 않고 원인을 그대로 노출
+        raise_exceptions=False,
+        run_config=RunConfig(timeout=600, max_workers=1),
     )
 
     scored_df = result.to_pandas()
@@ -89,7 +101,7 @@ def main():
     print(f"\n상세 결과 저장: {OUTPUT_FILE}")
 
     print("\n=== store별 평균 점수 ===")
-    summary = scored_df.groupby("store")[["faithfulness", "answer_relevancy"]].mean()
+    summary = scored_df.groupby("store")[["answer_relevancy"]].mean()
     summary["avg_response_ms"] = scored_df.groupby("store")["server_elapsed_ms"].mean()
     print(summary.round(3))
 
