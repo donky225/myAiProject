@@ -6,6 +6,7 @@ answer, contexts, 응답시간을 수집하고 결과를 CSV로 저장합니다.
     python collect_results.py
 """
 import json
+import os
 import time
 import requests
 import pandas as pd
@@ -13,7 +14,15 @@ import pandas as pd
 BASE_URL = "http://localhost:8080/api/rag/evaluate"
 STORES = ["opensearch", "pgvector"]
 QUESTIONS_FILE = "questions.json"
-OUTPUT_FILE = "collected_results.csv"
+
+# 리랭킹 켬/끔 비교용: OUTPUT_FILE 환경변수로 출력 파일명을 다르게 지정 가능
+# (rerank.enabled는 application.yml 설정이라 API로 못 바꾸므로, Spring Boot를
+#  켬/끔 상태로 각각 재시작한 뒤 이 스크립트를 두 번 실행해 결과를 따로 모음)
+#   RERANK_LABEL=on  python collect_results.py   → collected_results_on.csv
+#   RERANK_LABEL=off python collect_results.py   → collected_results_off.csv
+#   (라벨 없이 실행하면 기존과 동일하게 collected_results.csv)
+RERANK_LABEL = os.environ.get("RERANK_LABEL", "")
+OUTPUT_FILE = f"collected_results_{RERANK_LABEL}.csv" if RERANK_LABEL else "collected_results.csv"
 
 
 def load_questions(path):

@@ -4,6 +4,14 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+*-env/
+
+rerank-env/
+rag-eval-env/
+qlora-env/
+__pycache__/
+*.pyc
+
 voice-pipeline/voice-pipeline-env/
 venv/
 .venv/

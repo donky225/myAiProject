@@ -8,6 +8,7 @@ OpenSearch vs pgvector 비교 결과를 콘솔과 CSV로 출력합니다.
     python evaluate_ragas.py
 """
 import asyncio
+import os
 import sys
 
 if sys.platform == "win32":
@@ -28,8 +29,12 @@ from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.run_config import RunConfig
 
-INPUT_FILE = "collected_results.csv"
-OUTPUT_FILE = "ragas_scores.csv"
+# 리랭킹 켬/끔 비교용: RERANK_LABEL 환경변수로 입출력 파일을 구분
+#   RERANK_LABEL=on  python evaluate_ragas.py   → collected_results_on.csv 읽어서 ragas_scores_on.csv 저장
+#   RERANK_LABEL=off python evaluate_ragas.py   → collected_results_off.csv 읽어서 ragas_scores_off.csv 저장
+RERANK_LABEL = os.environ.get("RERANK_LABEL", "")
+INPUT_FILE = f"collected_results_{RERANK_LABEL}.csv" if RERANK_LABEL else "collected_results.csv"
+OUTPUT_FILE = f"ragas_scores_{RERANK_LABEL}.csv" if RERANK_LABEL else "ragas_scores.csv"
 
 OLLAMA_BASE_URL = "http://localhost:11434"
 JUDGE_MODEL = "qwen3:4b"

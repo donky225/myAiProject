@@ -1,6 +1,6 @@
 # Local Multimodal AI Platform
 
-로컬 환경(Ollama + Docker)에서 동작하는 종합 AI 파이프라인 포트폴리오 프로젝트입니다. 텍스트 RAG, 이미지 생성, 실시간 음성 대화까지 하나의 웹 UI에서 다루며, 비동기 처리(Kafka)와 캐싱(Redis)까지 갖춘 실무형 아키텍처로 확장했습니다. 각 기능을 실제 프로덕션에서 마주치는 문제를 직접 디버깅하며 구축했습니다.
+로컬 환경(Ollama + Docker)에서 동작하는 종합 AI 파이프라인 포트폴리오 프로젝트입니다. 텍스트 RAG, 이미지 생성, 실시간 음성 대화까지 하나의 웹 UI에서 다루며, 비동기 처리(Kafka)와 캐싱(Redis), 리랭킹, MCP(Model Context Protocol) 서버까지 갖춘 실무형 아키텍처로 확장했습니다. 각 기능을 실제 프로덕션에서 마주치는 문제를 직접 디버깅하며 구축했습니다.
 
 ## 목차
 
@@ -27,19 +27,22 @@
 10. **Python + LangChain 독립 구현**
 11. **Docker Compose / Kubernetes / 클라우드(GCP) 배포 경험**
 12. **QLoRA 로컬 파인튜닝 (Unsloth)** — Qwen3-4B를 RTX 3060 6GB VRAM에서 QLoRA로 파인튜닝, GGUF 변환 후 Ollama 서빙까지 연결
+13. **리랭킹 (Cross-Encoder Reranking)** — 벡터검색 top-10 후보를 BAAI/bge-reranker-v2-m3로 재정렬해 관련성 향상, 별도 FastAPI 마이크로서비스로 분리
+14. **MCP(Model Context Protocol) 서버** — Spring AI 2.0 `@McpTool`로 기존 RAG 파이프라인을 MCP 표준 도구로 노출, Claude Desktop 등 MCP 클라이언트가 직접 호출 가능
 
 ## 아키텍처
 
 ```
-                         ┌─────────────────────┐
-                         │   웹 UI (index.html) │
-                         └──────────┬───────────┘
-                        HTTP        │        WebSocket (실시간 음성)
-              ┌─────────────────────┼─────────────────────┐
-              ▼                     ▼                     ▼
-    ┌──────────────────┐  ┌──────────────────┐  ┌─────────────────────┐
-    │  Spring Boot :8080 │  │  /ws/voice        │  │ Tavily Search API    │
-    └──┬───┬───┬───┬────┘  └──────────────────┘  └─────────────────────┘
+                         ┌─────────────────────┐              ┌───────────────────────┐
+                         │   웹 UI (index.html) │              │ MCP 클라이언트          │
+                         └──────────┬───────────┘              │ (Claude Desktop 등)    │
+                        HTTP        │        WebSocket (실시간 음성)  └──────────┬────────────┘
+              ┌─────────────────────┼─────────────────────┐              │ SSE
+              ▼                     ▼                     ▼              ▼
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │                         Spring Boot :8080                                 │
+    │  REST API (/api/rag/ask 등)          MCP 서버 (@McpTool, /sse)             │
+    └──┬───┬───┬───┬───────────────────────────────────────────────────────────┘
        │   │   │   │
        │   │   │   └──────────────┐
        │   │   └──────┐           ▼
@@ -48,10 +51,10 @@
        │ │pgvector │ │Redis│ │ (비동기 인제스트)│
        │ └────────┘ └────┘ └─────────────┘
        ▼
-┌──────────┐  ┌─────────────────────┐
-│OpenSearch │  │  Ollama :11434       │
-│  :9200    │  │  qwen3:4b (생성/스트림)│
-└──────────┘  │  qwen3-embedding:0.6b│
+┌──────────┐  ┌─────────────────────┐  ┌──────────────────────┐
+│OpenSearch │  │  Ollama :11434       │  │ Rerank Service :8002   │
+│  :9200    │  │  qwen3:4b (생성/스트림)│  │ (FastAPI, bge-reranker)│
+└──────────┘  │  qwen3-embedding:0.6b│  └──────────────────────┘
                └─────────────────────┘
               브라우저에서 직접 호출 (CORS 허용)
               ┌──────────────────────────┐
@@ -61,6 +64,21 @@
     │ WebUI :7860 (Docker)│      │ (FastAPI, faster-     │
     │ AUTOMATIC1111       │      │  whisper + MeloTTS)   │
     └──────────────────┘      └──────────────────────┘
+```
+
+**RAG 검색 흐름 (리랭킹 포함):**
+```
+질문 → 임베딩 → 벡터검색(OpenSearch/pgvector, top-10 후보)
+    → Rerank Service(BAAI/bge-reranker-v2-m3)로 재정렬 → 관련성 상위 3건
+    → (리랭크 서비스 장애 시 코사인 유사도 순으로 자동 폴백)
+    → qwen3:4b 프롬프트에 컨텍스트로 주입 → 답변 생성
+```
+
+**MCP 도구 호출 흐름:**
+```
+MCP 클라이언트 → SSE 연결(/sse) → search_company_documents 도구 호출
+    → RagService/PgVectorRagService.askWithContext() (리랭킹 포함, REST API와 동일 로직 재사용)
+    → 답변 + 근거 문서를 MCP 표준 응답 형식으로 반환
 ```
 
 **비동기 문서 인제스트 흐름 (Kafka):**
@@ -95,6 +113,8 @@
 | 음성 인식/합성 | faster-whisper, MeloTTS (한국어) + FastAPI |
 | 평가 | RAGAS + LangChain(Ollama 연동), 로컬 완결 평가 |
 | 파인튜닝 | Unsloth (QLoRA, 4bit), WSL2 Ubuntu + Miniconda(Python 3.11) 격리 환경 |
+| 리랭킹 | BAAI/bge-reranker-v2-m3 (cross-encoder), FastAPI 마이크로서비스 (별도 포트 8002) |
+| 에이전틱 프로토콜 | MCP(Model Context Protocol), Spring AI 2.0 `@McpTool`, MCP Inspector로 검증 |
 | 배포 | Docker Compose (로컬 GPU), Kubernetes/Minikube (CPU 데모), GCP Compute Engine (클라우드 경량 데모) |
 | 개발 환경 | IntelliJ IDEA(+ devtools), Windows 11, Docker Desktop(WSL2), NVIDIA RTX 3060 (VRAM 6GB) |
 
@@ -192,6 +212,70 @@ RTX 3060 6GB VRAM 환경에서 Unsloth로 `Qwen3-4B`를 QLoRA(4bit)로 파인튜
 
 **결론**: 200 step, 소량 데이터의 QLoRA는 응답 스타일(thinking 제거, 문체)에는 뚜렷한 영향을 줬지만, 콘텐츠 품질 면에서 일관된 개선을 보이지는 않았고 오히려 일부 케이스에서 언어 혼입 같은 부작용도 관찰되었습니다. 이는 실제 프로덕션 품질 향상보다는 **QLoRA 파이프라인 자체(학습→GGUF 변환→Ollama 서빙)를 실증하는 데 목적을 둔 결과**로, 정직한 한계로 문서화했습니다.
 
+### 8. 리랭킹 (Cross-Encoder Reranking)
+
+**이 기술이 뭔가요?**
+
+벡터 검색(임베딩 유사도 기반)은 질문과 문서를 각각 독립적으로 숫자 벡터로 바꾼 뒤 그 벡터 사이의 거리(코사인 유사도)로 관련성을 판단합니다. 이 방식을 **bi-encoder**라고 부르는데, 질문과 문서를 "따로따로" 인코딩하기 때문에 계산이 빨라 대규모 문서에서 후보를 빠르게 추려내는 데는 좋지만, 질문과 문서의 미묘한 문맥적 관련성까지는 못 잡아내는 한계가 있습니다.
+
+**리랭킹(cross-encoder)**은 반대로 질문과 문서를 "쌍으로 묶어서" 함께 모델에 넣고, 그 쌍이 얼마나 관련 있는지 직접 점수를 매깁니다. 문맥을 함께 보기 때문에 훨씬 정확하지만, 문서 하나하나를 질문과 짝지어 다시 계산해야 해서 느립니다.
+
+**그래서 실무에서는 이 둘을 순서대로 씁니다**: 먼저 빠른 bi-encoder(벡터 검색)로 넓은 후보군(top-10)을 빠르게 추리고, 그다음 느리지만 정확한 cross-encoder(리랭커)로 그 후보군 안에서만 다시 정밀하게 순위를 매겨 최종 top-3을 뽑는 방식입니다. "검색→리랭크→생성"은 실무 RAG 시스템의 표준 패턴입니다.
+
+**이 프로젝트에서의 역할**
+
+```
+질문 → 벡터검색(top-10 후보, OpenSearch/pgvector) → 리랭커(BAAI/bge-reranker-v2-m3)로 재정렬 → 상위 3건만 LLM 컨텍스트로 사용
+```
+
+- 리랭커는 별도 FastAPI 마이크로서비스(`rerank_service.py`, 포트 8002)로 구현해 Spring Boot 메인 앱과 분리했습니다. 리랭커 모델 교체나 튜닝이 메인 애플리케이션 재배포 없이 가능해지고, 기존 `voice-pipeline`(FastAPI, 8001) 서비스와 아키텍처 패턴이 일관됩니다.
+- Spring Boot 쪽(`RerankService.java`)은 REST로 후보 문서를 리랭크 서비스에 넘기고 재정렬된 결과를 받아옵니다.
+- **페일세이프 설계**: 리랭크 서비스가 죽어 있거나 응답에 실패하면, 예외를 던지지 않고 빈 결과를 반환해 기존 코사인 유사도 방식으로 자동 폴백합니다 (Redis 캐시 장애 시 캐시만 건너뛰고 앱은 정상 동작하게 만든 것과 동일한 철학).
+
+**장점**
+
+- 벡터 검색만 쓸 때보다 검색 결과의 관련성이 대체로 향상됩니다 (아래 실측 참고).
+- 벡터 유사도 점수의 스케일이 스토어마다 다른 문제(OpenSearch 0.55 vs pgvector 0.25 임계값)를 리랭커의 0~1 정규화 점수로 어느 정도 통일할 수 있습니다.
+- 별도 서비스로 분리했기 때문에, 향후 더 좋은 리랭커 모델이 나와도 메인 앱 코드 변경 없이 교체 가능합니다.
+
+**실측 비교 (RAGAS `answer_relevancy`, 19건)**
+
+| store | 리랭킹 ON | 리랭킹 OFF |
+|---|---|---|
+| OpenSearch | **0.676** | 0.611 |
+| pgvector | 0.484 | **0.536** |
+
+흥미롭게도 리랭킹이 OpenSearch에는 도움이 됐지만 pgvector에는 오히려 손해였습니다. 원인 후보로 ① pgvector 쪽 리랭크 임계값이 OpenSearch와 동일한 값(0.5)으로 캘리브레이션 없이 적용된 점, ② 두 스토어의 청킹 전략 차이, ③ 표본 수(스토어당 9~10건)가 작아 노이즈일 가능성을 검토했습니다. **"리랭킹이 항상 모든 검색 백엔드에 균일하게 도움이 되는 건 아니며, 구성요소 하나를 바꿀 때마다 A/B로 실측 검증해야 한다"**는 것 자체를 정직하게 보여주는 결과로 남겨두었습니다 (표본을 늘리거나 스토어별 임계값을 따로 잡는 건 향후 개선 과제).
+
+### 9. MCP(Model Context Protocol) 서버
+
+**이 기술이 뭔가요?**
+
+MCP는 Anthropic이 제안한 개방형 표준 프로토콜로, LLM 애플리케이션(Claude Desktop, 각종 AI 에이전트 등)이 외부 데이터소스나 도구를 **일관된 방식**으로 호출할 수 있게 해줍니다. MCP 이전에는 "이 LLM 앱에 내 문서 검색 기능을 연결하려면" 그 앱이 지원하는 방식에 맞춰 매번 커스텀 연동을 짜야 했는데, MCP는 이걸 USB처럼 표준화합니다 — 도구를 "MCP 서버"로 한 번 노출해두면, MCP를 지원하는 어떤 클라이언트든 별도 연동 코드 없이 그 도구를 찾아서 호출할 수 있습니다.
+
+**이 프로젝트에서의 역할**
+
+기존에 이미 만들어둔 RAG 파이프라인(벡터검색 → 리랭킹 → LLM 생성)을 **MCP 도구로 노출**했습니다.
+
+```
+MCP 클라이언트(Claude Desktop, MCP Inspector 등)
+    ↓ SSE (http://localhost:8080/sse)
+Spring AI 2.0 @McpTool (RagMcpTools.java)
+    ↓ 그대로 재사용
+RagService / PgVectorRagService (리랭킹·캐싱·폴백 로직 전부 포함)
+```
+
+- Spring AI 2.0의 네이티브 `@McpTool` 어노테이션(`spring-ai-starter-mcp-server-webmvc`)을 사용해, 별도 언어나 프레임워크 추가 없이 기존 Java/Spring 스택 그대로 구현했습니다.
+- `search_company_documents`라는 단일 도구로 기존 `askWithContext()` 로직(리랭킹 포함)을 그대로 노출합니다 — MCP 계층은 얇은 어댑터일 뿐, 검색/생성 로직은 전혀 새로 만들지 않았습니다.
+- 8080 포트의 기존 웹 애플리케이션에 얹혀 동작하므로, 별도 프로세스나 포트 없이 REST API와 MCP 도구가 같은 앱에서 공존합니다.
+- 공식 **MCP Inspector**(Anthropic 제공 테스트 도구)로 Claude Desktop 설정 없이도 프로토콜 연결·도구 목록·실제 호출까지 독립적으로 검증했습니다.
+
+**장점**
+
+- **표준 준수**: 이 프로젝트의 RAG 기능이 Claude Desktop뿐 아니라 MCP를 지원하는 어떤 AI 클라이언트에도 별도 연동 코드 없이 연결됩니다. "커스텀 REST API 하나"가 아니라 "업계 표준 프로토콜을 구현한 도구 서버"라는 점이 차별화됩니다.
+- **관심사 분리**: MCP 도구 계층이 비즈니스 로직(RagService)을 감싸는 얇은 어댑터로만 존재해, 프로토콜이 바뀌어도 핵심 로직은 그대로 재사용됩니다.
+- **에이전틱 AI 생태계 대응**: 최근 채용 시장에서 MCP/에이전틱 AI 경험에 대한 언급이 빠르게 늘고 있는데, 실제로 프로토콜을 구현하고 공식 도구로 검증까지 한 경험은 이력서상의 키워드 나열과는 다른 실질적 증빙이 됩니다.
+
 ## 클라우드 배포
 
 GCP Compute Engine 무료 체험($300 크레딧, 90일)에 경량화된 버전을 배포했습니다.
@@ -224,6 +308,12 @@ GCP Compute Engine 무료 체험($300 크레딧, 90일)에 경량화된 버전�
 | PowerShell에서 메모장으로 만든 Modelfile을 `ollama create`가 못 찾음 (`no Modelfile or safetensors files found`) | 메모장이 저장 시 자동으로 `.txt` 확장자를 붙여 실제 파일명이 의도와 다름 | `dir 파일명*`으로 실제 저장된 이름 확인 후 `Rename-Item`으로 수정, 또는 PowerShell의 `Out-File`로 직접 생성해 확장자 문제 회피 |
 | PowerShell 콘솔에 한글 입력/출력이 깨져 보임 | 콘솔 코드페이지가 UTF-8이 아닌 상태 (모델 자체 응답은 정상, 화면 표시만 깨짐) | `chcp 65001` 및 `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` 설정 |
 | 한국어 시스템 프롬프트를 줘도 `<think>` 블록만 영어로 생성 | Qwen3 계열 모델은 SYSTEM 프롬프트가 최종 출력 언어엔 적용되지만 내부 thinking 채널까지는 강제하지 못함 | thinking 자체를 `--think=false`로 비활성화하거나 `--hidethinking`으로 화면 노출만 차단 |
+| 리랭커(`sentence-transformers CrossEncoder`)가 `AssertionError: Torch not compiled with CUDA enabled` | `pip install torch`가 Windows에서 기본 CPU 전용 빌드를 설치함(`--index-url` 없이 설치 시) | 리랭커는 가벼운 모델(1.1GB)이라 `device="cpu"`로 전환. GPU가 꼭 필요하면 `--index-url https://download.pytorch.org/whl/cu121`로 재설치 |
+| 리랭킹 적용 후 pgvector 스토어의 `answer_relevancy`가 오히려 하락 | OpenSearch와 pgvector에 동일한 리랭크 임계값(0.5)을 캘리브레이션 없이 적용, 표본 수(스토어당 9~10건)도 작아 노이즈 가능성 있음 | 원인 규명 중 — 스토어별 임계값 개별 캘리브레이션 및 표본 확대가 향후 과제. 억지로 결론을 포장하지 않고 정직한 혼재 결과로 문서화 |
+| RAG 텍스트 API 응답이 질문과 무관하게 영어로 나옴 | 텍스트 RAG 프롬프트(`RagService`, `PgVectorRagService`)에 언어 지시가 애초에 없었음 (음성 파이프라인에만 있었던 지시문이 텍스트 API에는 누락) | 두 서비스의 모든 프롬프트 템플릿에 "반드시 한국어로만 답변하세요" 명시 |
+| MCP Inspector 실행 시 `npx: 용어가 인식되지 않습니다` | 이 프로젝트는 Java/Spring 스택이라 Node.js가 설치돼 있지 않았음 | `winget install OpenJS.NodeJS.LTS`로 설치 후 **터미널을 완전히 새로 열어야** PATH가 반영됨 |
+| `start.sh`로 Stable Diffusion/음성 서버가 하나도 안 뜸 | IntelliJ의 내장 실행 버튼으로 셸 스크립트를 돌리면 `start`(cmd 내장 명령)나 `mintty`(GUI 새 창 실행)가 IntelliJ의 제한된 프로세스 환경에서 정상 동작하지 않음 | IntelliJ 밖의 진짜 Git Bash 터미널 창을 직접 열어서 `./start.sh` 실행 |
+| MCP 서버 엔드포인트 경로를 몰라 Inspector 연결 실패 | Spring AI MCP webmvc 스타터의 기본 SSE 경로가 문서마다 다르게 언급되어 혼동 | 브라우저로 직접 `http://localhost:8080/sse`를 열어 SSE 스트림(`event:endpoint` 응답)이 나오는지로 실제 경로 확인 |
 
 ## 로드맵
 
@@ -237,5 +327,8 @@ GCP Compute Engine 무료 체험($300 크레딧, 90일)에 경량화된 버전�
 - [x] **Redis 캐싱 (검색/답변)**
 - [x] **RAGAS 평가 결과 기반 OpenSearch vs pgvector 정량 비교** — `answer_relevancy` 지표로 19건 평가 완료 (결과: [상세 기능 설명 6번](#6-rag-정량-평가-ragas-opensearch-vs-pgvector))
 - [x] **QLoRA 기반 로컬 파인튜닝 (unsloth)** — Qwen3-4B, RTX 3060 6GB VRAM에서 완료 (결과: [상세 기능 설명 7번](#7-qlora-로컬-파인튜닝-unsloth))
+- [x] **리랭킹 (Cross-Encoder Reranking)** — BAAI/bge-reranker-v2-m3, OpenSearch/pgvector 양쪽 통합 완료 (결과: [상세 기능 설명 8번](#8-리랭킹-cross-encoder-reranking))
+- [x] **MCP(Model Context Protocol) 서버** — Spring AI 2.0 `@McpTool`, MCP Inspector로 검증 완료 (결과: [상세 기능 설명 9번](#9-mcpmodel-context-protocol-서버))
 - [ ] **클라우드(GCP) 배포 최종 마무리** — 서버 재기동 확인 및 정식 코드 동기화 남음
+- [ ] 관측성 (Prometheus + Grafana) — 요청 지연시간, 캐시 히트율, Kafka consumer lag 등 메트릭 시각화
 
