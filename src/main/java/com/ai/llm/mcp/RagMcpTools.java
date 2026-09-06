@@ -3,6 +3,8 @@ package com.ai.llm.mcp;
 import com.ai.llm.pgvector.PgVectorRagService;
 import com.ai.llm.rag.RagAnswer;
 import com.ai.llm.rag.RagService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Component;
@@ -17,6 +19,8 @@ import java.util.List;
  */
 @Component
 public class RagMcpTools {
+
+    private static final Logger log = LoggerFactory.getLogger(RagMcpTools.class);
 
     private final RagService ragService;
     private final PgVectorRagService pgVectorRagService;
@@ -40,11 +44,13 @@ public class RagMcpTools {
                     String store
     ) {
         String selectedStore = (store == null || store.isBlank()) ? "opensearch" : store;
+        log.info(">>> [MCP] search_company_documents 호출 (store={}) 질문: \"{}\"", selectedStore, question);
 
         RagAnswer answer = "pgvector".equalsIgnoreCase(selectedStore)
                 ? pgVectorRagService.askWithContext(question)
                 : ragService.askWithContext(question);
 
+        log.info("<<< [MCP] 응답 완료 ({}ms, 근거 문서 {}건)", answer.elapsedMillis(), answer.contexts().size());
         return new RagToolResult(answer.answer(), answer.contexts(), answer.elapsedMillis());
     }
 }

@@ -1,5 +1,7 @@
 package com.ai.llm.rerank;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -17,6 +19,8 @@ import java.util.List;
 @Service
 public class RerankService {
 
+    private static final Logger log = LoggerFactory.getLogger(RerankService.class);
+
     private final RestClient restClient;
     private final boolean enabled;
     private final int topK;
@@ -30,6 +34,7 @@ public class RerankService {
         this.restClient = restClientBuilder.baseUrl(serviceUrl).build();
         this.enabled = enabled;
         this.topK = topK;
+        log.info("RerankService 초기화 완료 (enabled={}, url={}, topK={})", enabled, serviceUrl, topK);
     }
 
     public boolean isEnabled() {
@@ -47,8 +52,10 @@ public class RerankService {
      */
     public List<RerankedResult> rerank(String query, List<RerankDoc> documents) {
         if (!enabled || documents.isEmpty()) {
+            log.debug("리랭크 스킵 (enabled={}, 후보 문서 수={})", enabled, documents.size());
             return List.of();
         }
+        long start = System.currentTimeMillis();
         try {
             RerankRequest request = new RerankRequest(query, documents, topK);
             RerankResponse response = restClient.post()
@@ -56,10 +63,21 @@ public class RerankService {
                     .body(request)
                     .retrieve()
                     .body(RerankResponse.class);
+
+            long elapsed = System.currentTimeMillis() - start;
+            int resultCount = response != null ? response.results().size() : 0;
+            log.info("리랭크 성공: 후보 {}건 → 결과 {}건 ({}ms) [질문: \"{}\"]",
+                    documents.size(), resultCount, elapsed, truncate(query));
+
             return response != null ? response.results() : List.of();
         } catch (Exception e) {
             // 리랭크 서비스 장애 시 RAG 자체는 계속 동작해야 하므로 예외를 흡수하고 폴백
+            log.warn("리랭크 서비스 호출 실패, 코사인 유사도 폴백으로 전환: {}", e.getMessage());
             return List.of();
         }
+    }
+
+    private String truncate(String text) {
+        return text.length() > 30 ? text.substring(0, 30) + "..." : text;
     }
 }

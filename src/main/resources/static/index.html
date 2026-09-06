@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Local RAG 테스트</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
     <style>
         body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 16px; }
         h2 { margin-top: 40px; }
@@ -130,28 +131,50 @@
     }
 
     let asking = false;
+    let currentEventSource = null;
+    const STREAM_DONE_MARKER = '[[STREAM_DONE]]';
 
-    async function ask() {
+    // SSE(Server-Sent Events)로 실시간 스트리밍 답변을 받습니다.
+    // Java 쪽 Flux<String> → text/event-stream을 EventSource(브라우저 표준 SSE 클라이언트)로 구독하고,
+    // 화면 갱신은 jQuery로 처리합니다.
+    function ask() {
         if (asking) return; // 응답 오기 전 중복 클릭 방지
-        const question = document.getElementById('question').value;
-        const store = document.getElementById('askStore').value;
+        const question = $('#question').val();
+        const store = $('#askStore').val();
         if (!question) return;
 
         asking = true;
-        const askButton = document.getElementById('askButton');
-        askButton.disabled = true;
-        document.getElementById('loading').style.display = 'block';
-        document.getElementById('answer').textContent = '';
+        $('#askButton').prop('disabled', true);
+        $('#loading').show();
+        $('#answer').text('');
 
-        try {
-            const res = await fetch('/api/rag/ask?question=' + encodeURIComponent(question) + '&store=' + store);
-            const text = await res.text();
-            document.getElementById('answer').textContent = text;
-        } catch (e) {
-            document.getElementById('answer').textContent = '오류: ' + e.message;
-        } finally {
-            document.getElementById('loading').style.display = 'none';
-            askButton.disabled = false;
+        const url = '/api/rag/ask/stream?question=' + encodeURIComponent(question) + '&store=' + encodeURIComponent(store);
+        const eventSource = new EventSource(url);
+        currentEventSource = eventSource;
+
+        eventSource.onmessage = function (event) {
+            if (event.data === STREAM_DONE_MARKER) {
+                // 서버가 보낸 명시적 종료 신호. 브라우저의 자동 재연결이 시작되기 전에
+                // 여기서 먼저 연결을 닫아, 정상 종료를 에러로 오인하지 않게 합니다.
+                finishAsk();
+                return;
+            }
+            $('#loading').hide();
+            $('#answer').append(event.data);
+        };
+
+        eventSource.onerror = function () {
+            // STREAM_DONE_MARKER로 정상 종료를 이미 처리하므로, 여기 도달하는 에러는
+            // 진짜 연결 문제(서버 다운, 네트워크 끊김 등)로 간주합니다.
+            $('#answer').append('\n[오류: 스트리밍 연결이 끊겼습니다]');
+            finishAsk();
+        };
+
+        function finishAsk() {
+            eventSource.close();
+            currentEventSource = null;
+            $('#loading').hide();
+            $('#askButton').prop('disabled', false);
             asking = false;
         }
     }

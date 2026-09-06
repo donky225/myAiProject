@@ -4,8 +4,11 @@ import com.ai.llm.opensearch.dto.KnnSearchResponse;
 import com.ai.llm.ollama.OllamaService;
 import com.ai.llm.opensearch.OpenSearchService;
 import com.ai.llm.rerank.RerankService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.Map;
@@ -14,6 +17,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class RagService {
+
+    private static final Logger log = LoggerFactory.getLogger(RagService.class);
 
     // 벡터 검색(코사인) 자체의 최소 관련성 컷오프. 리랭킹이 꺼져있거나 실패했을 때의 폴백 기준.
     // (기존 값 그대로 유지 — 문서 3개 기준 실측값 0.6~0.7대를 참고해 설정)
@@ -42,11 +47,25 @@ public class RagService {
     }
 
     public String ask(String question) {
+        log.info("[OpenSearch] ask() 호출: \"{}\"", question);
         List<KnnSearchResponse.Hit> relevantHits = getRelevantHits(question);
         return ollamaService.generate(buildSimplePrompt(question, relevantHits));
     }
 
+    /**
+     * ask()와 동일한 검색/프롬프트 로직을 쓰되, LLM 생성 결과를 토큰 단위로 스트리밍합니다.
+     * 벡터검색+리랭킹(동기, 보통 수백ms~수초)은 스트림 구독 이전에 먼저 끝내고,
+     * 이후 LLM 생성 토큰만 Flux로 흘려보냅니다 — 컨트롤러가 SSE로 그대로 중계합니다.
+     */
+    public Flux<String> askStream(String question) {
+        log.info("[OpenSearch] askStream() 호출: \"{}\"", question);
+        List<KnnSearchResponse.Hit> relevantHits = getRelevantHits(question);
+        String prompt = buildSimplePrompt(question, relevantHits);
+        return ollamaService.generateStreamReactive(prompt);
+    }
+
     public RagAnswer askWithContext(String question) {
+        log.info("[OpenSearch] askWithContext() 호출: \"{}\"", question);
         long start = System.currentTimeMillis();
 
         List<KnnSearchResponse.Hit> relevantHits = getRelevantHits(question);
@@ -56,6 +75,7 @@ public class RagService {
 
         String answer = ollamaService.generate(buildStrictPrompt(question, relevantHits));
         long elapsed = System.currentTimeMillis() - start;
+        log.info("[OpenSearch] 답변 생성 완료 ({}ms, 컨텍스트 {}건)", elapsed, contexts.size());
 
         return new RagAnswer(question, answer, contexts, elapsed);
     }
@@ -70,6 +90,7 @@ public class RagService {
     private List<KnnSearchResponse.Hit> getRelevantHits(String question) {
         float[] queryVector = ollamaService.embed(question);
         List<KnnSearchResponse.Hit> candidates = openSearchService.search(queryVector, candidateCount);
+        log.debug("[OpenSearch] 벡터검색 후보 {}건 조회 (candidateCount={})", candidates.size(), candidateCount);
 
         if (rerankService.isEnabled()) {
             // NOTE: hit._id()가 KnnSearchResponse.Hit에 실제로 존재하는 필드인지 확인 필요.
@@ -87,19 +108,24 @@ public class RagService {
                 Map<String, KnnSearchResponse.Hit> byId = candidates.stream()
                         .collect(Collectors.toMap(KnnSearchResponse.Hit::_id, hit -> hit, (a, b) -> a));
 
-                return reranked.stream()
+                List<KnnSearchResponse.Hit> result = reranked.stream()
                         .filter(r -> r.score() >= RERANK_RELEVANCE_THRESHOLD)
                         .map(r -> byId.get(r.id()))
                         .filter(Objects::nonNull)
                         .toList();
+                log.info("[OpenSearch] 리랭킹 적용됨 → 최종 {}건 (임계값 {} 이상)", result.size(), RERANK_RELEVANCE_THRESHOLD);
+                return result;
             }
+            log.warn("[OpenSearch] 리랭크 결과 없음 → 코사인 유사도 폴백");
             // 리랭크 서비스 호출 실패(빈 결과) → 아래 코사인 폴백으로 진행
         }
 
-        return candidates.stream()
+        List<KnnSearchResponse.Hit> fallback = candidates.stream()
                 .filter(hit -> hit._score() >= COSINE_RELEVANCE_THRESHOLD)
                 .limit(3)
                 .toList();
+        log.debug("[OpenSearch] 코사인 유사도 필터 적용 → {}건 (임계값 {} 이상)", fallback.size(), COSINE_RELEVANCE_THRESHOLD);
+        return fallback;
     }
 
     private String buildSimplePrompt(String question, List<KnnSearchResponse.Hit> relevantHits) {
