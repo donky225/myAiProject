@@ -5,8 +5,9 @@
 #   cd D:\MyAiProject
 #   .\start-all.ps1
 #
-# 종료할 때는 stop-all.ps1을 사용하거나(Docker 서비스), 새로 열린 PowerShell 창
-# (Stable Diffusion / 음성 서버 / 리랭크 서버)은 각각 직접 닫거나 Ctrl+C로 중지하세요.
+# 종료할 때는 각각 새로 열린 PowerShell 창을 닫거나 Ctrl+C로 중지하면 됩니다.
+# Docker 컨테이너는 창을 닫아도 백그라운드에서 계속 돌아가므로, 완전히 끄려면
+# stop-all.ps1(또는 이 문서 하단의 종료 명령)을 사용하세요.
 
 # 자식 PowerShell 창에 한글이 포함된 명령을 넘길 때, -Command 방식은 시스템 기본
 # 코드페이지(CP949)로 잘못 해석되어 한글이 깨지는 문제가 있었습니다.
@@ -19,11 +20,11 @@ function Start-EncodedProcess {
 }
 
 Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host " 1/4. 메인 인프라 기동 (OpenSearch / PostgreSQL+pgvector / Ollama / Kafka / Redis)" -ForegroundColor Cyan
+Write-Host " 1/4. 메인 인프라 기동 (OpenSearch / PostgreSQL+pgvector / Ollama / Kafka / Redis / Prometheus / Grafana)" -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 
 Set-Location "D:\MyAiProject"
-docker compose up -d opensearch postgres ollama ollama-init kafka redis
+docker compose up -d opensearch postgres ollama ollama-init kafka redis prometheus grafana
 
 Write-Host ""
 Write-Host "==================================================" -ForegroundColor Cyan
@@ -62,11 +63,11 @@ Write-Host "  curl.exe http://localhost:7860                (Stable Diffusion We
 Write-Host "  curl.exe http://localhost:9200/_cluster/health (OpenSearch)"
 Write-Host "  docker logs local-kafka --tail 20          (Kafka - 에러 없이 기동됐는지)"
 Write-Host "  docker exec -it local-redis redis-cli ping (Redis - PONG이 나오면 정상)"
+Write-Host "  curl.exe http://localhost:9090/-/healthy      (Prometheus)"
+Write-Host "  브라우저로 http://localhost:3000 접속 (Grafana, admin/admin)"
 Write-Host ""
 Write-Host "Spring Boot 앱까지 뜨면 http://localhost:8080 에서 전체 기능을 사용할 수 있습니다."
 Write-Host "비동기 문서 업로드(Kafka)는 POST /api/documents/async/upload 로 테스트하세요."
 Write-Host "동일 질문 반복 시 Redis 캐시가 적용되어 두 번째 호출부터는 즉시 응답합니다."
-Write-Host ""
-Write-Host "종료할 때: 메인 인프라(Docker)는 .\stop-all.ps1 로, Stable Diffusion/음성 서버/리랭크 서버는 각 창을 직접 닫아주세요."
 
 Set-Location "D:\MyAiProject"

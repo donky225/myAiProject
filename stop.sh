@@ -5,9 +5,9 @@ YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
 NC='\033[0m' # No Color
 
-echo -e "${YELLOW}메인 인프라(OpenSearch/Postgres/Ollama/Kafka/Redis) 종료 중...${NC}"
+echo -e "${YELLOW}메인 인프라(OpenSearch/Postgres/Ollama/Kafka/Redis/Prometheus/Grafana) 종료 중...${NC}"
 cd /d/MyAiProject || exit
-docker compose stop opensearch postgres ollama kafka redis
+docker compose stop opensearch postgres ollama kafka redis prometheus grafana
 
 echo -e "${YELLOW}Stable Diffusion WebUI(Docker 컨테이너) 종료 중...${NC}"
 cd /d/stable-diffusion-webui-docker || exit

@@ -1,5 +1,7 @@
 package com.ai.llm.rerank;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,9 +26,12 @@ public class RerankService {
     private final RestClient restClient;
     private final boolean enabled;
     private final int topK;
+    private final Counter rerankSuccess;
+    private final Counter rerankFallback;
 
     public RerankService(
             RestClient.Builder restClientBuilder,
+            MeterRegistry meterRegistry,
             @Value("${rerank.service-url:http://localhost:8002}") String serviceUrl,
             @Value("${rerank.enabled:true}") boolean enabled,
             @Value("${rerank.top-k:3}") int topK
@@ -34,6 +39,13 @@ public class RerankService {
         this.restClient = restClientBuilder.baseUrl(serviceUrl).build();
         this.enabled = enabled;
         this.topK = topK;
+        // Grafana 대시보드의 "리랭킹 성공/폴백 비율" 패널이 참조하는 지표입니다.
+        this.rerankSuccess = Counter.builder("rag_rerank_success_total")
+                .description("리랭크 서비스 호출 성공 횟수")
+                .register(meterRegistry);
+        this.rerankFallback = Counter.builder("rag_rerank_fallback_total")
+                .description("리랭크 서비스 호출 실패로 코사인 유사도 폴백한 횟수")
+                .register(meterRegistry);
         log.info("RerankService 초기화 완료 (enabled={}, url={}, topK={})", enabled, serviceUrl, topK);
     }
 
@@ -68,11 +80,13 @@ public class RerankService {
             int resultCount = response != null ? response.results().size() : 0;
             log.info("리랭크 성공: 후보 {}건 → 결과 {}건 ({}ms) [질문: \"{}\"]",
                     documents.size(), resultCount, elapsed, truncate(query));
+            rerankSuccess.increment();
 
             return response != null ? response.results() : List.of();
         } catch (Exception e) {
             // 리랭크 서비스 장애 시 RAG 자체는 계속 동작해야 하므로 예외를 흡수하고 폴백
             log.warn("리랭크 서비스 호출 실패, 코사인 유사도 폴백으로 전환: {}", e.getMessage());
+            rerankFallback.increment();
             return List.of();
         }
     }

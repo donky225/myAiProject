@@ -102,9 +102,42 @@ services:
       - SPRING_DATASOURCE_USERNAME=rag_user
       - SPRING_DATASOURCE_PASSWORD=rag_password
 
+  # 관측성: Spring Boot(Micrometer)의 /actuator/prometheus 및 리랭크 서비스의 /metrics를
+  # 스크레이핑합니다. 두 서비스 모두 Docker 밖(IntelliJ/venv)에서 직접 실행되므로
+  # host.docker.internal로 접근합니다 (prometheus.yml 참고).
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: local-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: local-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana-provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana-dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
 volumes:
   opensearch-data:
   ollama-data:
   pgvector-data:
   kafka-data:
   redis-data:
+  prometheus-data:
+  grafana-data:

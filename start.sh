@@ -7,11 +7,11 @@ GREEN='\033[0;32m'
 NC='\033[0m' # No Color
 
 echo -e "${CYAN}==================================================${NC}"
-echo -e "${CYAN} 1/4. 메인 인프라 기동 (OpenSearch / PostgreSQL+pgvector / Ollama / Kafka)${NC}"
+echo -e "${CYAN} 1/4. 메인 인프라 기동 (OpenSearch / PostgreSQL+pgvector / Ollama / Kafka / Redis / Prometheus / Grafana)${NC}"
 echo -e "${CYAN}==================================================${NC}"
 
 cd /d/MyAiProject || exit
-docker compose up -d opensearch postgres ollama ollama-init kafka redis
+docker compose up -d opensearch postgres ollama ollama-init kafka redis prometheus grafana
 
 echo ""
 echo -e "${CYAN}==================================================${NC}"
@@ -49,6 +49,8 @@ echo "  curl http://localhost:8002/health        (리랭크 서버)"
 echo "  curl http://localhost:7860                (Stable Diffusion WebUI, 브라우저로 접속 권장)"
 echo "  curl http://localhost:9200/_cluster/health (OpenSearch)"
 echo "  docker logs local-kafka --tail 20          (Kafka - 에러 없이 기동됐는지)"
+echo "  curl http://localhost:9090/-/healthy       (Prometheus)"
+echo "  브라우저로 http://localhost:3000 접속 (Grafana, admin/admin)"
 echo ""
 echo "Spring Boot 앱까지 뜨면 http://localhost:8080 에서 전체 기능을 사용할 수 있습니다."
 echo "비동기 문서 업로드(Kafka)는 POST /api/documents/async/upload 로 테스트하세요."

@@ -1,0 +1,89 @@
+{
+  "title": "Local AI Platform - RAG 관측성",
+  "uid": "rag-observability",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "요청 지연시간 (p50/p95/p99) - /api/rag/ask",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(http_server_requests_seconds_bucket{uri=~\"/api/rag/ask.*\"}[1m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{uri=~\"/api/rag/ask.*\"}[1m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{uri=~\"/api/rag/ask.*\"}[1m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "title": "초당 요청 수 (store별)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_requests_seconds_count{uri=~\"/api/rag/ask.*\"}[1m])) by (uri, status)",
+          "legendFormat": "{{uri}} [{{status}}]"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "캐시 히트율",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(rag_cache_hits_total[1m])) / (sum(rate(rag_cache_hits_total[1m])) + sum(rate(rag_cache_misses_total[1m])))",
+          "legendFormat": "히트율"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1, "min": 0 }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "title": "캐시 히트 / 미스 (건수)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "sum(rate(rag_cache_hits_total[1m]))", "legendFormat": "히트" },
+        { "expr": "sum(rate(rag_cache_misses_total[1m]))", "legendFormat": "미스" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Kafka Consumer Lag (최대)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "kafka_consumer_fetch_manager_records_lag_max",
+          "legendFormat": "{{client_id}} - {{topic}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "리랭킹 성공/폴백 비율",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        { "expr": "sum(rate(rag_rerank_success_total[1m]))", "legendFormat": "리랭크 성공" },
+        { "expr": "sum(rate(rag_rerank_fallback_total[1m]))", "legendFormat": "코사인 폴백" }
+      ]
+    }
+  ]
+}

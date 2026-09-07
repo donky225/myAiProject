@@ -3,9 +3,9 @@
 # (음성 서버 / 리랭크 서버 / Stable Diffusion 콘솔 창은 별도 PowerShell 창에서
 #  떠 있으므로, Docker와 무관하게 각 창을 직접 닫거나 Ctrl+C로 종료해주세요.)
 
-Write-Host "메인 인프라(OpenSearch/Postgres/Ollama/Kafka/Redis) 종료 중..." -ForegroundColor Yellow
+Write-Host "메인 인프라(OpenSearch/Postgres/Ollama/Kafka/Redis/Prometheus/Grafana) 종료 중..." -ForegroundColor Yellow
 Set-Location "D:\MyAiProject"
-docker compose stop opensearch postgres ollama kafka redis
+docker compose stop opensearch postgres ollama kafka redis prometheus grafana
 
 Write-Host "Stable Diffusion WebUI(Docker 컨테이너) 종료 중..." -ForegroundColor Yellow
 Set-Location "D:\stable-diffusion-webui-docker"
