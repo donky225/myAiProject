@@ -1,0 +1,153 @@
+# =========================================================================
+# local-ai-platform 기본 values (로컬 Docker Desktop K8s / Minikube 대상)
+# GCP 등 원격 배포 시 values-gcp.yaml 로 오버라이드: helm install ... -f values-gcp.yaml
+# =========================================================================
+
+global:
+  namespace: ai-platform
+  imagePullPolicy: IfNotPresent
+
+  # GPU가 필요해 이 차트 밖(docker compose)에서 도는 서비스들.
+  # Windows Docker Desktop / Minikube 파드에서 호스트로 나가는 주소.
+  # Minikube 사용 시 host.docker.internal 대신 아래 명령 결과를 써야 할 수 있음:
+  #   minikube ssh -- 'cat /etc/resolv.conf'  (nameserver IP가 호스트 게이트웨이)
+  externalGpuServices:
+    ollamaUrl: "http://host.docker.internal:11434"
+    stableDiffusionUrl: "http://host.docker.internal:7860"
+    rerankUrl: "http://host.docker.internal:8002"
+    voiceServiceUrl: "http://host.docker.internal:8001"
+
+# -------------------------------------------------------------------------
+# Spring Boot 메인 애플리케이션
+# -------------------------------------------------------------------------
+springboot:
+  enabled: true
+  image:
+    repository: local-ai-platform/springboot
+    tag: latest
+  replicas: 1
+  containerPort: 8080
+  service:
+    type: NodePort
+    port: 8080
+    nodePort: 30080
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+  env:
+    ragChunkThreshold: "0.55"
+
+# -------------------------------------------------------------------------
+# OpenSearch (KNN 벡터스토어)
+# -------------------------------------------------------------------------
+opensearch:
+  enabled: true
+  image:
+    repository: opensearchproject/opensearch
+    tag: "3.0.0"
+  replicas: 1
+  storage: 5Gi
+  storageClassName: ""   # 빈 값이면 클러스터 기본 StorageClass 사용
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1.5Gi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+  javaOpts: "-Xms512m -Xmx512m"
+  disableSecurity: true   # 로컬/포트폴리오 데모 목적, 운영 배포 시 반드시 true→false로 변경할 것
+
+# -------------------------------------------------------------------------
+# PostgreSQL + pgvector
+# -------------------------------------------------------------------------
+postgres:
+  enabled: true
+  image:
+    repository: pgvector/pgvector
+    tag: pg16
+  storage: 5Gi
+  storageClassName: ""
+  database: rag_db
+  username: raguser
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+
+# -------------------------------------------------------------------------
+# Redis (응답/검색 캐시)
+# -------------------------------------------------------------------------
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: 7-alpine
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+# -------------------------------------------------------------------------
+# Kafka (KRaft 모드, 비동기 문서 인제스트)
+# -------------------------------------------------------------------------
+kafka:
+  enabled: true
+  image:
+    repository: apache/kafka
+    tag: latest
+  storage: 5Gi
+  storageClassName: ""
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "1"
+      memory: "1.5Gi"
+
+# -------------------------------------------------------------------------
+# 관측성 (Prometheus + Grafana)
+# -------------------------------------------------------------------------
+monitoring:
+  enabled: true
+  prometheus:
+    image:
+      repository: prom/prometheus
+      tag: latest
+    scrapeIntervalSeconds: 15
+  grafana:
+    image:
+      repository: grafana/grafana
+      tag: latest
+    adminUser: admin
+    adminPassword: admin   # helm install --set monitoring.grafana.adminPassword=... 로 반드시 덮어쓸 것
+    service:
+      type: NodePort
+      nodePort: 30300
+
+# -------------------------------------------------------------------------
+# 민감 정보 (실제 배포 시 --set 또는 별도 secret values 파일로 주입, git에 커밋 금지)
+# -------------------------------------------------------------------------
+secrets:
+  postgresPassword: "changeme"
+  tavilyApiKey: ""
+
+# -------------------------------------------------------------------------
+# 외부 진입점 (선택). 기본은 NodePort만으로 충분하며, Ingress Controller가
+# 이미 설치된 클러스터에서만 enabled: true 로 켤 것
+# -------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: nginx
+  host: ai-platform.local

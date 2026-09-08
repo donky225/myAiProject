@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.EmbeddingResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Schedulers;
@@ -24,15 +25,24 @@ import java.util.stream.Stream;
 public class OllamaService {
 
     private static final Logger log = LoggerFactory.getLogger(OllamaService.class);
-    private static final String OLLAMA_STREAM_URL = "http://localhost:11434/api/generate";
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     private final ChatModel chatModel;
     private final EmbeddingModel embeddingModel;
 
-    public OllamaService(ChatModel chatModel, EmbeddingModel embeddingModel) {
+    // application.yml의 spring.ai.ollama.base-url (환경변수 SPRING_AI_OLLAMA_BASE_URL로 오버라이드 가능)에서 주입.
+    // 기본값은 로컬 개발 환경(IntelliJ에서 직접 실행) 호환을 위해 localhost 유지.
+    private final String ollamaBaseUrl;
+
+    public OllamaService(
+            ChatModel chatModel,
+            EmbeddingModel embeddingModel,
+            @Value("${spring.ai.ollama.base-url:http://localhost:11434}") String ollamaBaseUrl
+    ) {
         this.chatModel = chatModel;
         this.embeddingModel = embeddingModel;
+        this.ollamaBaseUrl = ollamaBaseUrl;
+        log.info("OllamaService 초기화: base-url={}", ollamaBaseUrl);
     }
 
     /** 텍스트를 벡터로 변환합니다. */
@@ -50,8 +60,6 @@ public class OllamaService {
         log.info("LLM 생성 완료 ({}ms, 프롬프트 {}자, 응답 {}자)", System.currentTimeMillis() - start, prompt.length(), result.length());
         return result;
     }
-
-// 보통 http://localhost:11434 이거나 application.yml의 spring.ai.ollama.base-url 값입니다):
 
     /**
      * Ollama의 스트리밍 응답(stream=true)을 받아, 토큰이 도착할 때마다 onToken 콜백을 호출합니다.
@@ -71,7 +79,7 @@ public class OllamaService {
 
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(OLLAMA_STREAM_URL))
+                    .uri(URI.create(ollamaBaseUrl + "/api/generate"))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
                     .build();

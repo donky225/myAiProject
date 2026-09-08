@@ -1,0 +1,18 @@
+apiVersion: v2
+name: local-ai-platform
+description: >
+  Local Multimodal AI Platform - Spring Boot RAG 파이프라인 + 벡터스토어 +
+  비동기 인제스트 + 관측성 스택을 하나의 Helm 차트로 배포합니다.
+  GPU가 필요한 컴포넌트(Ollama, Stable Diffusion, Reranker)는 이 차트 범위 밖이며
+  docker compose로 로컬에서 별도 실행한 뒤 externalGpuServices 값으로 연결합니다.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - rag
+  - llm
+  - kubernetes
+  - spring-ai
+home: https://github.com/your-id/MyAiProject
+maintainers:
+  - name: 현스

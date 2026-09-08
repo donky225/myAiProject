@@ -1,0 +1,30 @@
+# GCP e2-standard-4 같은 CPU-only 인스턴스용 오버라이드 예시
+# helm install ai-platform ./local-ai-platform -f values-gcp.yaml \
+#   --set secrets.postgresPassword=<실비밀번호> \
+#   --set monitoring.grafana.adminPassword=<실비밀번호>
+#
+# 이미 README/SETUP.md에 정리된 "경량화 배포"(OpenSearch 제외, GPU 예약 제거) 원칙을
+# 그대로 Helm values로 옮긴 버전입니다.
+
+opensearch:
+  enabled: false   # pgvector만 사용
+
+monitoring:
+  enabled: false   # 리소스가 빠듯한 CPU 인스턴스에서는 우선 끄고 필요시 true로 전환
+
+global:
+  # GCP VM에 Ollama를 CPU 모드 컨테이너로 별도로 띄운 경우 그 서비스 주소로 교체
+  externalGpuServices:
+    ollamaUrl: "http://ollama:11434"
+    stableDiffusionUrl: ""   # GPU 미탑재 환경이라 미사용
+    rerankUrl: ""
+    voiceServiceUrl: ""
+
+springboot:
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"

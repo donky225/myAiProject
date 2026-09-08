@@ -1,13 +1,13 @@
 package com.ai.llm.pgvector;
 
-import org.apache.pdfbox.Loader;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.text.PDFTextStripper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +16,8 @@ import java.util.regex.Pattern;
 
 @Service
 public class PgVectorIngestService {
+
+    private static final Logger log = LoggerFactory.getLogger(PgVectorIngestService.class);
 
     private static final int MAX_CHUNK_SIZE = 1024;
     private static final int OVERLAP_SENTENCES = 1;
@@ -46,19 +48,37 @@ public class PgVectorIngestService {
         this.pdfTextExtractionService = pdfTextExtractionService;
     }
 
+    /**
+     * 메서드명은 하위 호환을 위해 유지하지만, 실제로는 PDF뿐 아니라
+     * 일반 텍스트(.txt) 파일도 처리합니다 (버그 수정: 예전엔 파일 형식과
+     * 무관하게 무조건 PDF로 파싱을 시도해, .txt 업로드가 항상
+     * "End-of-File, expected line" 에러로 실패했습니다).
+     */
     public int ingestPdf(MultipartFile file) throws IOException {
-        String text = pdfTextExtractionService.extractText(file);
         String title = file.getOriginalFilename() == null ? "unknown" : file.getOriginalFilename();
+        String text = extractTextByType(file, title);
         List<Document> chunks = chunk(text, title);
         pgVectorService.add(chunks);
         return chunks.size();
     }
 
-    private String extractText(MultipartFile file) throws IOException {
-        try (PDDocument document = Loader.loadPDF(file.getBytes())) {
-            PDFTextStripper stripper = new PDFTextStripper();
-            return stripper.getText(document);
+    /**
+     * 파일 확장자와 Content-Type을 확인해 PDF는 PdfTextExtractionService로,
+     * 그 외(텍스트 파일 등)는 UTF-8로 직접 읽어 반환합니다.
+     */
+    private String extractTextByType(MultipartFile file, String filename) throws IOException {
+        String lowerName = filename.toLowerCase();
+        String contentType = file.getContentType();
+        boolean looksLikePdf = lowerName.endsWith(".pdf")
+                || "application/pdf".equals(contentType);
+
+        if (looksLikePdf) {
+            log.debug("PDF로 판단, PdfTextExtractionService로 파싱: {}", filename);
+            return pdfTextExtractionService.extractText(file);
         }
+
+        log.debug("텍스트 파일로 판단, UTF-8로 직접 읽음: {} (contentType={})", filename, contentType);
+        return new String(file.getBytes(), StandardCharsets.UTF_8);
     }
 
     /**
@@ -87,8 +107,12 @@ public class PgVectorIngestService {
         // 목차 점선처럼 실질 정보가 없는 청크는 임베딩/저장 대상에서 제외합니다.
         List<Document> documents = new ArrayList<>();
         int index = 0;
+        int skippedAsNoise = 0;
         for (String rawChunk : rawChunks) {
-            if (isNoiseChunk(rawChunk)) continue;
+            if (isNoiseChunk(rawChunk)) {
+                skippedAsNoise++;
+                continue;
+            }
 
             String content = "[" + sourceName + "] " + rawChunk;
             Document doc = new Document(
@@ -97,6 +121,11 @@ public class PgVectorIngestService {
             );
             documents.add(doc);
             index++;
+        }
+
+        if (skippedAsNoise > 0) {
+            log.info("청킹 완료: {}건 저장, {}건 노이즈(30자 미만)로 제외 [{}]",
+                    documents.size(), skippedAsNoise, sourceName);
         }
 
         return documents;

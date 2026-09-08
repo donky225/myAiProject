@@ -1,0 +1,74 @@
+{{- if .Values.opensearch.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: opensearch
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: opensearch
+    {{- include "ai-platform.labels" . | nindent 4 }}
+spec:
+  serviceName: opensearch
+  replicas: {{ .Values.opensearch.replicas }}
+  selector:
+    matchLabels:
+      app: opensearch
+  template:
+    metadata:
+      labels:
+        app: opensearch
+    spec:
+      containers:
+        - name: opensearch
+          image: "{{ .Values.opensearch.image.repository }}:{{ .Values.opensearch.image.tag }}"
+          ports:
+            - containerPort: 9200
+            - containerPort: 9600
+          env:
+            - name: discovery.type
+              value: single-node
+            - name: OPENSEARCH_JAVA_OPTS
+              value: {{ .Values.opensearch.javaOpts | quote }}
+            - name: DISABLE_SECURITY_PLUGIN
+              value: {{ .Values.opensearch.disableSecurity | quote }}
+            - name: DISABLE_INSTALL_DEMO_CONFIG
+              value: "true"
+          resources:
+            {{- toYaml .Values.opensearch.resources | nindent 12 }}
+          volumeMounts:
+            - name: opensearch-data
+              mountPath: /usr/share/opensearch/data
+          readinessProbe:
+            tcpSocket:
+              port: 9200
+            initialDelaySeconds: 30
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: opensearch-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.opensearch.storageClassName }}
+        storageClassName: {{ .Values.opensearch.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.opensearch.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "ai-platform.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    app: opensearch
+  ports:
+    - name: http
+      port: 9200
+    - name: transport
+      port: 9600
+{{- end }}

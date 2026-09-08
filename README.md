@@ -11,10 +11,10 @@
 - [핵심 기능](#핵심-기능)
 - [아키텍처](#아키텍처)
 - [기술 스택](#기술-스택)
-- [기술별 역할과 연결 구조](#기술별-역할과-연결-구조)
 - [빠른 시작](#빠른-시작)
-- [상세 기능 설명 및 구현 결과](#상세-기능-설명-및-구현-결과)
+- [상세 기능 설명](#상세-기능-설명)
 - [클라우드 배포](#클라우드-배포)
+- [쿠버네티스(Helm) 배포](#쿠버네티스helm-배포)
 - [주요 기술적 의사결정 및 트러블슈팅](#주요-기술적-의사결정-및-트러블슈팅)
 - [로드맵](#로드맵)
 
@@ -34,32 +34,34 @@
 12. **QLoRA 로컬 파인튜닝 (Unsloth)** — Qwen3-4B를 RTX 3060 6GB VRAM에서 QLoRA로 파인튜닝, GGUF 변환 후 Ollama 서빙까지 연결
 13. **리랭킹 (Cross-Encoder Reranking)** — 벡터검색 top-10 후보를 BAAI/bge-reranker-v2-m3로 재정렬해 관련성 향상, 별도 FastAPI 마이크로서비스로 분리
 14. **MCP(Model Context Protocol) 서버** — Spring AI 2.0 `@McpTool`로 기존 RAG 파이프라인을 MCP 표준 도구로 노출, Claude Desktop 등 MCP 클라이언트가 직접 호출 가능
+15. **실시간 스트리밍 응답 (Flux + SSE)** — 텍스트 질답도 토큰 단위로 실시간 스트리밍, EventSource + jQuery로 타이핑 효과 구현
+16. **관측성 (Prometheus + Grafana)** — 요청 지연시간, 캐시 히트율, Kafka consumer lag, 리랭킹 성공/폴백 비율을 대시보드로 시각화
 
 ## 아키텍처
 
 ```
-                         ┌──────────────────────┐                    ┌───────────────────────┐
-                         │   웹 UI (index.html) │                    │ MCP 클라이언트         │
-                         └──────────┬───────────┘                    │ (Claude Desktop 등)   │
-                        HTTP        │        WebSocket (실시간 음성)  └──────────┬────────────┘
-              ┌─────────────────────┼─────────────────────┐              │ SSE
-              ▼                     ▼                     ▼              ▼
-    ┌──────────────────────────────────────────────────────────────────────────┐
-    │                         Spring Boot :8080                                │
-    │  REST API (/api/rag/ask 등)          MCP 서버 (@McpTool, /sse)            │
-    └──┬───┬───┬───┬───────────────────────────────────────────────────────────┘
+                         ┌──────────────────────┐                    ┌────────────────────────┐
+                         │   웹 UI (index.html) │                    │ MCP 클라이언트          │
+                         └──────────┬───────────┘                    │ (Claude Desktop 등)    │
+                        HTTP        │        WebSocket (실시간 음성)  └──────────┬─────────────┘
+              ┌─────────────────────┼─────────────────────┐                     │ SSE
+              ▼                     ▼                     ▼                     ▼
+    ┌────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                      Spring Boot :8080                                 │
+    │  REST API (/api/rag/ask 등)                                MCP 서버 (@McpTool, /sse)    │
+    └──┬───┬───┬───┬─────────────────────────────────────────────────────────────────────────┘
        │   │   │   │
        │   │   │   └──────────────┐
        │   │   └──────┐           ▼
-       │   ▼          ▼     ┌───────────────────┐
-       │ ┌────────┐ ┌─────┐ │ Kafka             │
-       │ │pgvector│ │Redis│ │ (비동기 인제스트)  │
-       │ └────────┘ └─────┘ └───────────────────┘
+       │   ▼          ▼      ┌─────────────────┐
+       │ ┌─────────┐ ┌─────┐ │    Kafka        │
+       │ │pgvector │ │Redis│ │ (비동기 인제스트)│
+       │ └─────────┘ └─────┘ └─────────────────┘
        ▼
-┌───────────┐  ┌───────────────────────┐  ┌─────────────────────────┐
-│OpenSearch │  │  Ollama :11434        │  │ Rerank Service :8002    │
-│  :9200    │  │  qwen3:4b (생성/스트림)│  │ (FastAPI, bge-reranker) │
-└───────────┘  │  qwen3-embedding:0.6b │  └─────────────────────────┘
+┌───────────┐  ┌───────────────────────┐  ┌────────────────────────┐
+│OpenSearch │  │  Ollama :11434        │  │ Rerank Service :8002   │
+│  :9200    │  │  qwen3:4b (생성/스트림)│  │ (FastAPI, bge-reranker)│
+└───────────┘  │  qwen3-embedding:0.6b │  └────────────────────────┘
                └───────────────────────┘
               브라우저에서 직접 호출 (CORS 허용)
               ┌──────────────────────────┐
@@ -120,1122 +122,10 @@ MCP 클라이언트 → SSE 연결(/sse) → search_company_documents 도구 호
 | 파인튜닝 | Unsloth (QLoRA, 4bit), WSL2 Ubuntu + Miniconda(Python 3.11) 격리 환경 |
 | 리랭킹 | BAAI/bge-reranker-v2-m3 (cross-encoder), FastAPI 마이크로서비스 (별도 포트 8002) |
 | 에이전틱 프로토콜 | MCP(Model Context Protocol), Spring AI 2.0 `@McpTool`, MCP Inspector로 검증 |
-| 배포 | Docker Compose (로컬 GPU), Kubernetes/Minikube (CPU 데모), GCP Compute Engine (클라우드 경량 데모) |
+| 실시간 통신(텍스트) | Spring MVC + Project Reactor `Flux` (SSE), 브라우저 `EventSource` + jQuery |
+| 관측성 | Micrometer, Prometheus, Grafana (프로비저닝 기반 자동 대시보드) |
+| 배포 | Docker Compose (로컬 GPU 서비스), **Kubernetes + Helm 차트** (CPU 컴포넌트 7종 일괄 배포), GCP Compute Engine (클라우드 경량 데모) |
 | 개발 환경 | IntelliJ IDEA(+ devtools), Windows 11, Docker Desktop(WSL2), NVIDIA RTX 3060 (VRAM 6GB) |
-
-
-## 기술별 역할과 연결 구조
-
-이 프로젝트는 단순히 여러 AI 기술을 나열한 프로젝트가 아니라, **각 기술이 담당하는 문제를 해결하고 서로 연결하여 하나의 AI 서비스로 동작하도록 구성한 로컬 AI 플랫폼**입니다.
-
-각 기술은 다음과 같은 역할을 담당합니다.
-
-```text
-문서 입력
-   ↓
-PDFBox / Tesseract OCR
-   ↓
-문서 정제 및 Chunking
-   ↓
-Embedding
-   ↓
-OpenSearch / pgvector
-   ↓
-Vector Search
-   ↓
-Reranker
-   ↓
-가장 관련성 높은 문서 선택
-   ↓
-Qwen3 (Ollama)
-   ↓
-RAG 기반 답변
-   ↓
-Redis Cache
-```
-
-여기에 실제 서비스에서 발생할 수 있는 처리 지연과 확장 문제를 해결하기 위해 Kafka를 연결하고, 최신 정보가 필요한 경우 Tavily를 사용하며, 음성/이미지까지 확장할 수 있도록 STT/TTS와 Stable Diffusion을 연결했습니다.
-
----
-
-### 1. Ollama + Qwen3
-
-#### 무엇을 하는 기술인가?
-
-**Ollama**는 로컬 컴퓨터에서 LLM을 실행할 수 있도록 해주는 실행 환경이고, **Qwen3**는 실제로 질문을 이해하고 답변을 생성하는 LLM입니다.
-
-이 프로젝트에서는 `qwen3:4b`를 기본 생성 모델로 사용합니다.
-
-쉽게 표현하면:
-
-```text
-Ollama = AI 모델을 실행하는 엔진
-Qwen3  = 실제로 생각하고 답변하는 AI 모델
-```
-
-#### 이 프로젝트에서의 역할
-
-- 사용자의 질문에 대한 답변 생성
-- RAG에서 검색된 문서를 Context로 받아 최종 답변 생성
-- 이미지 생성 시 한글 프롬프트를 Stable Diffusion에서 사용할 수 있는 형태로 변환
-- 실시간 음성 대화에서 STT 결과를 받아 답변 생성
-- 최신 정보가 필요한 질문인지 판단하여 Tavily 검색 여부 결정
-- QLoRA로 학습한 GGUF 모델을 다시 Ollama에서 서비스
-
-#### 장점
-
-- 외부 LLM API 없이 로컬 환경에서 실행 가능
-- 문서나 질문을 외부 AI 서버로 보내지 않아 데이터 보호에 유리
-- API 호출 비용 없이 반복적인 개발/테스트 가능
-- 모델을 교체하거나 직접 튜닝한 모델을 연결하기 쉬움
-
-#### 다른 기술과 연결했을 때의 시너지
-
-```text
-Ollama + RAG
-→ 내 문서를 참고해서 답변하는 AI
-
-Ollama + Tavily
-→ 최신 인터넷 정보를 참고해서 답변하는 AI
-
-Ollama + STT/TTS
-→ 음성으로 대화하는 AI
-
-Ollama + QLoRA
-→ 직접 튜닝한 로컬 AI 모델을 서비스
-
-Ollama + Stable Diffusion
-→ 텍스트와 이미지를 함께 처리하는 멀티모달 AI
-```
-
----
-
-### 2. Embedding + Vector Database
-
-#### 무엇을 하는 기술인가?
-
-Embedding은 문장이나 문서의 **의미를 숫자로 표현하는 기술**입니다.
-
-예를 들어 다음 두 문장은 단어가 완전히 같지는 않지만 의미가 비슷합니다.
-
-```text
-"휴가를 신청하려면 어떻게 해야 하나요?"
-"연차 사용 절차를 알려주세요."
-```
-
-Embedding을 사용하면 이러한 문장을 숫자 벡터로 변환하고, 벡터 간의 유사도를 계산하여 **의미가 비슷한 문서**를 찾을 수 있습니다.
-
-#### 이 프로젝트에서의 역할
-
-문서를 저장할 때:
-
-```text
-문서
- ↓
-Chunking
- ↓
-Embedding
- ↓
-Vector 저장
-```
-
-질문할 때:
-
-```text
-사용자 질문
- ↓
-Embedding
- ↓
-Vector Search
- ↓
-관련 문서 검색
-```
-
-구조로 사용합니다.
-
-#### 장점
-
-일반적인 단어 검색과 달리 **질문과 문서에 동일한 단어가 없어도 의미가 유사하면 검색할 수 있습니다.**
-
-#### 다른 기술과의 시너지
-
-```text
-Embedding
-    +
-OpenSearch / pgvector
-    ↓
-의미 기반 문서 검색
-
-의미 기반 검색
-    +
-Reranker
-    ↓
-빠른 1차 검색 + 정밀한 2차 검색
-```
-
-이 구조가 RAG의 검색 품질을 결정하는 핵심 기반이 됩니다.
-
----
-
-### 3. OpenSearch + pgvector
-
-이 프로젝트에서는 동일한 RAG 기능을 **OpenSearch와 PostgreSQL + pgvector 두 가지 방식으로 구현**했습니다.
-
-#### OpenSearch
-
-검색엔진을 기반으로 Vector 검색을 수행합니다.
-
-```text
-문서
- ↓
-Embedding Vector
- ↓
-OpenSearch KNN
- ↓
-유사한 문서 검색
-```
-
-대규모 검색 시스템으로 확장하기 좋고, 검색 기능과 Vector 검색을 함께 구성할 수 있다는 장점이 있습니다.
-
-#### PostgreSQL + pgvector
-
-기존 PostgreSQL 데이터베이스에 Vector 기능을 추가하여 AI 검색을 수행합니다.
-
-```text
-PostgreSQL
- ├─ 일반 데이터
- ├─ 문서 정보
- ├─ 메타데이터
- └─ Vector
-```
-
-처럼 일반적인 서비스 데이터와 AI 검색 데이터를 하나의 DB 생태계에서 관리할 수 있습니다.
-
-#### 두 가지를 구현한 이유
-
-단순히 특정 Vector DB 하나만 사용하는 것보다 서로 다른 저장 방식을 동일한 RAG 파이프라인에서 비교할 수 있습니다.
-
-실제 프로젝트에서는 RAGAS를 이용하여 두 저장소의 응답 품질과 응답 시간을 측정했습니다.
-
-즉,
-
-> **"어떤 기술이 무조건 더 좋다"가 아니라 실제 데이터와 사용 환경에 따라 적합한 저장소를 선택할 수 있도록 비교 가능한 구조를 만든 것**
-
-이 장점입니다.
-
----
-
-### 4. RAG
-
-#### 무엇을 하는 기술인가?
-
-RAG는 **Retrieval-Augmented Generation**의 약자로, AI가 가지고 있는 지식만 사용하는 것이 아니라 **외부 문서를 먼저 검색하고 그 결과를 참고하여 답변하도록 만드는 구조**입니다.
-
-일반 LLM:
-
-```text
-질문 → LLM → 답변
-```
-
-RAG:
-
-```text
-질문
- ↓
-관련 문서 검색
- ↓
-검색 결과
- ↓
-LLM
- ↓
-문서 근거 기반 답변
-```
-
-#### 이 프로젝트에서의 역할
-
-회사 문서나 PDF 등의 내용을 Vector DB에 저장한 뒤 사용자가 질문하면 관련 문서를 검색하여 Qwen3에 전달합니다.
-
-#### 장점
-
-- LLM이 학습하지 않은 내부 문서를 활용 가능
-- 문서 기반 답변을 만들 수 있음
-- 문서를 업데이트하면 모델을 다시 학습시키지 않고 지식 변경 가능
-- 특정 기업/업무/서비스에 맞는 AI 검색 시스템으로 확장 가능
-
-#### 핵심 시너지
-
-```text
-RAG
- +
-Embedding
- +
-Vector DB
- +
-Reranker
- +
-LLM
-```
-
-이 연결을 통해
-
-**"문서를 검색할 수 있는 AI" → "검색 결과 중 가장 중요한 내용을 골라 답하는 AI"**
-
-로 발전합니다.
-
----
-
-### 5. 문서 Chunking + PDFBox + Tesseract OCR
-
-#### 왜 문서를 잘라야 하는가?
-
-수백 페이지의 PDF를 하나의 거대한 텍스트로 저장하면 검색 시 필요한 부분을 정확하게 찾기 어렵습니다.
-
-따라서 문서를 의미 있는 작은 단위인 **Chunk**로 나눕니다.
-
-```text
-PDF
- ↓
-텍스트 추출
- ↓
-문장 단위 Chunking
- ↓
-Chunk 1
-Chunk 2
-Chunk 3
-...
-```
-
-이 프로젝트에서는 단순 문자 수 기준으로 자르는 대신 **문장 경계를 고려한 Chunking**을 적용했습니다.
-
-#### PDFBox
-
-일반적인 PDF 텍스트를 추출합니다.
-
-#### Tesseract OCR
-
-PDF 안에 텍스트가 아닌 이미지 형태로 들어있는 표나 내용을 OCR로 읽어 텍스트 추출을 보완합니다.
-
-```text
-PDF
- ├─ 일반 텍스트 → PDFBox
- └─ 이미지/표   → Tesseract OCR
-```
-
-#### 연결했을 때의 장점
-
-```text
-PDFBox + OCR
-    ↓
-더 많은 문서 내용 확보
-    ↓
-Chunking
-    ↓
-Embedding
-    ↓
-Vector DB
-    ↓
-RAG 검색 품질 향상
-```
-
-즉, **RAG의 검색 품질은 검색 기술만으로 결정되는 것이 아니라 처음 문서를 얼마나 잘 추출하고 나누느냐에도 영향을 받기 때문에 문서 처리 단계부터 검색 단계까지 연결하여 설계했습니다.**
-
----
-
-### 6. Vector Search + Cross-Encoder Reranker
-
-Vector Search는 빠르게 관련 문서를 찾는 데 적합하지만, 검색된 모든 문서가 질문에 정확히 필요한 것은 아닙니다.
-
-그래서 두 단계 검색 구조를 사용합니다.
-
-```text
-사용자 질문
- ↓
-Vector Search
- ↓
-Top-10 후보
- ↓
-Cross-Encoder Reranker
- ↓
-정밀하게 관련성 평가
- ↓
-Top-3
- ↓
-LLM
-```
-
-#### Vector Search의 역할
-
-**빠르게 넓은 범위에서 후보를 찾습니다.**
-
-#### Reranker의 역할
-
-질문과 문서를 함께 분석하여 **실제로 질문에 도움이 되는 문서인지 다시 판단합니다.**
-
-#### 왜 두 개를 연결하는가?
-
-Reranker만 사용하면 모든 문서를 질문과 하나씩 비교해야 하므로 비용이 커집니다.
-
-반대로 Vector Search만 사용하면 빠르지만 미묘한 문맥 차이를 놓칠 수 있습니다.
-
-따라서:
-
-```text
-Vector Search
-= 빠른 1차 선별
-
-Reranker
-= 느리지만 정확한 2차 선별
-```
-
-방식으로 연결하면 **검색 속도와 정밀도를 동시에 고려할 수 있습니다.**
-
----
-
-### 7. RAG + Redis
-
-Redis는 자주 사용되는 데이터를 메모리에 빠르게 저장하는 캐시입니다.
-
-AI 시스템에서는 동일한 질문이 반복되는 경우가 많기 때문에 효과적입니다.
-
-```text
-첫 번째 질문
- ↓
-RAG 검색 + LLM 생성
- ↓
-Redis 저장
-
-두 번째 동일 질문
- ↓
-Redis 확인
- ↓
-즉시 응답
-```
-
-#### 이 프로젝트에서의 역할
-
-- Tavily 검색 결과 캐싱
-- RAG 답변 캐싱
-- 반복적인 Vector 검색과 LLM 생성을 줄임
-
-#### 장점
-
-- 응답 속도 향상
-- LLM 처리량 감소
-- Vector 검색 부하 감소
-- 외부 검색 API 호출량 감소
-
-특히 프로젝트에서는 Redis 장애가 발생하더라도 **캐시 기능만 건너뛰고 본래의 RAG 기능은 계속 동작하도록 페일세이프 구조**를 적용했습니다.
-
-즉:
-
-```text
-Redis 정상
- → 캐시 사용
-
-Redis 장애
- → 캐시 없이 정상 처리
-```
-
-로 구성하여 캐시가 전체 서비스의 장애 지점이 되지 않도록 했습니다.
-
----
-
-### 8. Kafka + 문서 인제스트
-
-문서 업로드 후 OCR, Chunking, Embedding까지 수행하면 파일 크기와 문서 양에 따라 처리 시간이 길어질 수 있습니다.
-
-이 작업을 사용자 요청과 동시에 처리하면 사용자는 업로드 화면에서 오랫동안 기다려야 합니다.
-
-Kafka를 연결하면:
-
-```text
-사용자
- ↓
-문서 업로드
- ↓
-파일 저장
- ↓
-Kafka 이벤트 발행
- ↓
-즉시 jobId 응답
-```
-
-이후 백그라운드에서:
-
-```text
-Kafka Consumer
- ↓
-OCR
- ↓
-Chunking
- ↓
-Embedding
- ↓
-Vector DB 저장
- ↓
-상태 업데이트
-```
-
-를 수행합니다.
-
-#### 장점
-
-- 사용자는 업로드 완료를 즉시 확인할 수 있음
-- 시간이 오래 걸리는 작업을 백그라운드에서 처리
-- 대용량 문서 처리에 유리
-- 작업 상태를 jobId로 관리 가능
-- 향후 Consumer를 여러 개로 확장하여 처리량을 높일 수 있음
-
-#### 핵심 시너지
-
-```text
-Kafka
- +
-OCR
- +
-Chunking
- +
-Embedding
- +
-Vector DB
-```
-
-를 연결하여 **문서가 시스템에 들어오는 순간부터 AI가 검색할 수 있는 지식으로 변환되는 전체 인제스트 파이프라인**을 완성했습니다.
-
----
-
-### 9. Spring Boot + Spring AI + Ollama
-
-Spring Boot는 전체 AI 시스템의 중심 서버 역할을 합니다.
-
-```text
-                    Spring Boot
-                         │
-       ┌─────────────────┼─────────────────┐
-       │                 │                 │
-     Ollama            Redis             Kafka
-       │                 │                 │
-     Qwen3          Cache 처리        비동기 처리
-       │
-       ├──────────── OpenSearch
-       ├──────────── pgvector
-       ├──────────── Reranker
-       ├──────────── Tavily
-       └──────────── MCP
-```
-
-Spring AI를 사용하여 Java/Spring 환경에서 LLM과 MCP 등의 AI 기능을 기존 백엔드 구조와 연결했습니다.
-
-#### 장점
-
-기존 웹 서비스의 인증, API, 데이터 처리, 예외 처리, 비즈니스 로직과 AI 기능을 하나의 애플리케이션 구조 안에서 통합하기 쉽습니다.
-
-즉, **AI만 따로 만든 것이 아니라 일반적인 기업용 웹 애플리케이션에 AI 기능을 결합할 수 있는 형태**로 구성했습니다.
-
----
-
-### 10. Python + FastAPI + AI 모델
-
-Java/Spring이 전체 시스템의 중심이지만 일부 AI 모델은 Python 생태계에서 사용하기 편리합니다.
-
-따라서 모델 처리 영역을 FastAPI 서비스로 분리했습니다.
-
-```text
-Spring Boot
-    │
-    ├── REST → Rerank Service :8002
-    │
-    └── REST → Voice Service :8001
-```
-
-#### 장점
-
-- AI 모델과 메인 애플리케이션의 결합도를 낮춤
-- Python 기반 AI 모델을 Java 시스템에서 쉽게 사용
-- 모델 변경 시 Spring Boot 전체를 수정할 필요가 적음
-- AI 기능을 독립적인 서비스로 확장 가능
-
-이는 **Java의 서비스 개발 장점과 Python의 AI 생태계를 함께 사용하는 구조**입니다.
-
----
-
-### 11. STT + LLM + TTS
-
-음성 AI는 세 가지 핵심 기술을 연결합니다.
-
-```text
-사람의 음성
- ↓
-STT
- ↓
-텍스트
- ↓
-LLM
- ↓
-답변 텍스트
- ↓
-TTS
- ↓
-사람이 들을 수 있는 음성
-```
-
-프로젝트에서는:
-
-- `faster-whisper` → STT
-- `Qwen3` → 답변 생성
-- `MeloTTS` → TTS
-
-를 사용합니다.
-
-#### 장점
-
-텍스트 기반 AI를 **음성 기반 AI 서비스로 확장**할 수 있습니다.
-
-여기에 WebSocket과 VAD를 연결하면:
-
-```text
-마이크
- ↓
-실시간 음량 측정
- ↓
-말이 끝났는지 판단
- ↓
-STT
- ↓
-LLM 스트리밍
- ↓
-문장 단위 TTS
- ↓
-음성 재생
-```
-
-으로 이어지는 실시간 대화 시스템이 됩니다.
-
----
-
-### 12. WebSocket + VAD + Streaming TTS
-
-일반 HTTP는 요청과 응답을 주고받는 방식이지만 실시간 음성 대화에서는 지속적으로 데이터를 주고받는 구조가 필요합니다.
-
-그래서 WebSocket을 사용합니다.
-
-VAD는 사용자가 말을 끝냈는지 판단하고, LLM Streaming은 답변이 완성될 때까지 기다리지 않고 생성되는 내용을 순차적으로 전달합니다.
-
-프로젝트에서는 문장이 완성될 때마다 TTS를 백그라운드에서 처리하고 브라우저가 오디오를 순서대로 재생합니다.
-
-```text
-음성 입력
- ↓
-VAD
- ↓
-STT
- ↓
-LLM Streaming
- ↓
-문장 1 ─→ TTS ─→ 재생
-문장 2 ─→ TTS ─→ 재생
-문장 3 ─→ TTS ─→ 재생
-```
-
-#### 장점
-
-전체 답변이 완성될 때까지 기다렸다가 한 번에 음성으로 만드는 것보다 **사용자가 첫 문장을 더 빨리 들을 수 있어 체감 응답속도를 줄일 수 있습니다.**
-
----
-
-### 13. Ollama + Tavily
-
-로컬 LLM은 내부 지식을 활용하는 데는 좋지만 현재 시점의 정보가 필요한 질문에는 한계가 있습니다.
-
-그래서 질문에 따라 외부 검색을 선택적으로 사용합니다.
-
-```text
-사용자 질문
- ↓
-Qwen3
- ↓
-최신 정보 필요?
- ├─ 아니오 → RAG / LLM
- └─ 예
-      ↓
-    Tavily
-      ↓
-  최신 검색 결과
-      ↓
-    Qwen3
-      ↓
-    답변
-```
-
-#### 장점
-
-**로컬 LLM의 개인정보 보호 장점은 유지하면서 필요한 경우에만 최신 웹 정보를 보강**할 수 있습니다.
-
-또한 Redis와 함께 사용하면 Tavily 검색 결과를 캐싱하여 동일한 검색을 반복하지 않도록 할 수 있습니다.
-
-```text
-Tavily
- +
-Redis
- ↓
-검색 API 호출 감소
-```
-
----
-
-### 14. Stable Diffusion + Ollama
-
-Stable Diffusion은 텍스트를 이미지로 만드는 생성 모델입니다.
-
-이 프로젝트에서는 Qwen3가 한글 입력을 Stable Diffusion에서 사용할 수 있는 프롬프트 형태로 변환한 뒤 이미지 생성을 요청합니다.
-
-```text
-사용자
- ↓
-한글 이미지 요청
- ↓
-Qwen3
- ↓
-프롬프트 변환
- ↓
-Stable Diffusion
- ↓
-이미지
-```
-
-#### 장점
-
-LLM의 텍스트 생성 기능에 이미지 생성 기능을 추가하여 **하나의 웹 UI에서 텍스트와 이미지 생성 기능을 함께 제공**할 수 있습니다.
-
----
-
-### 15. QLoRA + Unsloth + Ollama
-
-QLoRA는 기존 LLM을 적은 GPU 자원으로 추가 학습할 수 있도록 하는 방식이고, Unsloth는 이러한 로컬 파인튜닝을 효율적으로 수행하기 위한 도구입니다.
-
-프로젝트에서는 RTX 3060 6GB 환경에서 Qwen3-4B를 QLoRA 방식으로 학습하고 GGUF로 변환한 뒤 Ollama에서 다시 실행했습니다.
-
-```text
-Qwen3-4B
- ↓
-Unsloth + QLoRA
- ↓
-학습
- ↓
-GGUF 변환
- ↓
-Ollama
- ↓
-서비스
-```
-
-#### 장점
-
-단순히 기존 모델을 사용하는 것에서 끝나지 않고:
-
-**모델 선택 → 추가 학습 → 모델 변환 → 실제 서비스 적용**
-
-까지 하나의 흐름으로 연결할 수 있습니다.
-
-이번 실험에서는 콘텐츠 품질이 일관되게 향상되지는 않았지만, 로컬 GPU 환경에서 QLoRA 학습부터 Ollama 서빙까지의 전체 파이프라인을 실제로 검증했다는 점에 의미가 있습니다.
-
----
-
-### 16. RAGAS + RAG
-
-AI 시스템은 단순히 "답변이 나왔다"만으로 품질을 판단하기 어렵습니다.
-
-따라서 RAGAS를 이용해 RAG 결과를 정량적으로 평가했습니다.
-
-```text
-동일 질문 세트
- ↓
-OpenSearch RAG
- ↓
-평가
-
-동일 질문 세트
- ↓
-pgvector RAG
- ↓
-평가
-```
-
-프로젝트에서는 로컬 Ollama를 평가 모델로 사용하여 외부 평가 API에 의존하지 않는 방식으로 테스트했습니다.
-
-#### 장점
-
-기술을 적용하기 전에:
-
-```text
-기존 구조
- ↓
-측정
- ↓
-기술 적용
- ↓
-다시 측정
- ↓
-실제 개선 여부 확인
-```
-
-이라는 검증 구조를 만들 수 있습니다.
-
-즉, **"새 기술을 사용했으니 좋아졌다"가 아니라 실제 결과를 측정해서 기술의 효과를 확인하는 구조**입니다.
-
----
-
-### 17. MCP + RAG
-
-MCP는 AI 애플리케이션이 외부 데이터나 기능을 표준화된 방식으로 사용할 수 있도록 하는 프로토콜입니다.
-
-이 프로젝트에서는 기존 RAG 기능을 MCP Tool로 노출했습니다.
-
-```text
-MCP Client
-    ↓
-MCP
-    ↓
-search_company_documents
-    ↓
-기존 RAG
-    ↓
-Vector Search
-    ↓
-Reranker
-    ↓
-Qwen3
-    ↓
-답변
-```
-
-중요한 점은 MCP를 위해 RAG를 새로 만든 것이 아니라 **기존 RAG 비즈니스 로직을 그대로 재사용했다는 것**입니다.
-
-#### 장점
-
-- 기존 RAG를 다른 AI Client에서도 사용할 수 있음
-- RAG 로직과 MCP 연결 계층을 분리
-- 하나의 기능을 REST API와 MCP 양쪽에서 재사용 가능
-- 향후 다른 AI Agent와 연결하기 쉬운 구조
-
-즉,
-
-> **기존에 만든 AI 기능을 특정 웹 화면에만 가둬두지 않고 다른 AI 시스템에서도 사용할 수 있는 도구 형태로 확장했다는 점**
-
-이 핵심입니다.
-
----
-
-### 18. Docker + 전체 AI 인프라
-
-AI 시스템은 하나의 프로그램만 실행하면 되는 구조가 아닙니다.
-
-이 프로젝트에는 다음과 같은 여러 서비스가 함께 동작합니다.
-
-```text
-Spring Boot
-Ollama
-OpenSearch
-PostgreSQL
-Kafka
-Redis
-Reranker
-Voice Service
-Stable Diffusion
-```
-
-Docker를 이용하면 각 서비스를 독립적인 컨테이너로 관리할 수 있습니다.
-
-```text
-Docker
- ├─ Ollama
- ├─ OpenSearch
- ├─ PostgreSQL
- ├─ Kafka
- ├─ Redis
- ├─ Stable Diffusion
- ├─ Voice Service
- └─ Rerank Service
-```
-
-#### 장점
-
-- 개발 환경 구성 단순화
-- 서비스별 독립적인 실행/종료 가능
-- 환경 차이로 인한 문제 감소
-- 여러 AI 구성요소를 하나의 개발 환경에서 통합 관리
-
----
-
-### 19. Docker + Kubernetes + GCP
-
-Docker로 로컬에서 여러 서비스를 컨테이너화한 뒤 Kubernetes와 GCP 환경까지 확장했습니다.
-
-```text
-로컬 개발
- ↓
-Docker Compose
- ↓
-Kubernetes / Minikube
- ↓
-GCP Compute Engine
-```
-
-각 환경의 목적은 다릅니다.
-
-- **Docker Compose** → 로컬 통합 개발
-- **Kubernetes / Minikube** → 컨테이너 오케스트레이션 구조 학습 및 검증
-- **GCP** → 실제 클라우드 환경 배포 검증
-
-이 프로젝트에서는 클라우드 자원 제약을 고려해 GCP 버전에서는 OpenSearch와 GPU 기반 기능을 제외하고 pgvector 중심의 경량화된 구성을 사용했습니다.
-
-이를 통해 **개발 환경의 모든 기능을 그대로 클라우드에 올리는 것이 아니라, 실행 환경의 자원에 맞춰 시스템을 선택적으로 구성하는 경험**까지 포함했습니다.
-
----
-
-## 기술 간 전체 시너지
-
-이 프로젝트의 가장 중요한 부분은 개별 기술보다 **기술 간 연결**입니다.
-
-### 문서가 AI의 지식이 되는 과정
-
-```text
-PDF
- ↓
-PDFBox / Tesseract OCR
- ↓
-텍스트 추출
- ↓
-문장 단위 Chunking
- ↓
-Embedding
- ↓
-OpenSearch / pgvector
- ↓
-AI가 검색할 수 있는 지식 저장소
-```
-
-### 사용자가 질문하는 과정
-
-```text
-사용자 질문
- ↓
-Embedding
- ↓
-Vector Search
- ↓
-Top-10 후보
- ↓
-Reranker
- ↓
-Top-3 핵심 문서
- ↓
-Qwen3
- ↓
-문서 근거 기반 답변
-```
-
-### 서비스 성능을 보완하는 과정
-
-```text
-질문
- ↓
-Redis Cache
- ├─ Cache Hit → 즉시 응답
- └─ Cache Miss
-       ↓
-    RAG 처리
-```
-
-```text
-대용량 문서
- ↓
-Kafka
- ↓
-백그라운드 처리
- ↓
-OCR → Chunking → Embedding → Vector DB
-```
-
-### 최신 정보를 보완하는 과정
-
-```text
-질문
- ↓
-Qwen3
- ↓
-최신 정보 필요 여부 판단
- ↓
-Tavily
- ↓
-웹 검색
- ↓
-Qwen3
- ↓
-최신 정보 기반 답변
-```
-
-### 음성 AI로 확장하는 과정
-
-```text
-사용자 음성
- ↓
-VAD
- ↓
-STT
- ↓
-Qwen3
- ↓
-Streaming
- ↓
-문장 단위 TTS
- ↓
-음성 응답
-```
-
-### 다른 AI 시스템으로 확장하는 과정
-
-```text
-MCP Client
- ↓
-MCP
- ↓
-RAG Tool
- ↓
-기존 Vector Search + Reranker + LLM
- ↓
-답변
-```
-
-### 모델 자체를 개선하는 과정
-
-```text
-기존 Qwen3
- ↓
-QLoRA / Unsloth
- ↓
-추가 학습
- ↓
-GGUF
- ↓
-Ollama
- ↓
-개선된 모델 서비스
-```
-
----
-
-## 왜 이 프로젝트가 하나의 완성된 AI 시스템으로 볼 수 있는가?
-
-이 프로젝트는 단순히 **LLM을 실행하는 것**에서 끝나지 않고 AI 서비스가 실제로 동작하기 위해 필요한 여러 계층을 하나의 흐름으로 연결했습니다.
-
-```text
-┌─────────────────────────────────────────────────────────────┐
-│                         사용자 경험                          │
-│             Web UI / Text / Voice / Image                   │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────┐
-│                     Spring Boot / Spring AI                 │
-│                 API / RAG / MCP / WebSocket                 │
-└──────────┬───────────────┬────────────────┬─────────────────┘
-           │               │                │
-        Redis            Kafka           FastAPI
-        Cache          Async Job       AI Services
-           │               │                │
-           │          ┌────▼─────┐     ┌────┴─────┐
-           │          │ Document │     │ Reranker │
-           │          │ Pipeline │     │ STT/TTS  │
-           │          └────┬─────┘     └──────────┘
-           │               │
-           │       OCR / Chunking
-           │               │
-           │           Embedding
-           │               │
-           └──────────┬────┴───────────────────────┐
-                      │                            │
-                 OpenSearch                    pgvector
-                      │                            │
-                      └────────────┬───────────────┘
-                                   │
-                              Vector Search
-                                   │
-                                Reranker
-                                   │
-                              ┌────▼────┐
-                              │ Ollama  │
-                              │ Qwen3   │
-                              └────┬────┘
-                                   │
-                         ┌─────────┴─────────┐
-                         │                   │
-                       답변              Tavily
-                                             │
-                                         최신 정보
-```
-
-각 기술의 역할을 정리하면 다음과 같습니다.
-
-| 단계 | 기술 | 해결하는 문제 |
-|---|---|---|
-| AI 실행 | Ollama + Qwen3 | 로컬에서 AI를 실행 |
-| 문서 읽기 | PDFBox + Tesseract | 다양한 형태의 문서에서 정보 추출 |
-| 문서 분할 | Chunking | 긴 문서를 검색 가능한 단위로 분리 |
-| 의미 변환 | Embedding | 문장의 의미를 숫자로 표현 |
-| 지식 저장 | OpenSearch / pgvector | AI가 검색할 수 있는 Vector 저장 |
-| 빠른 검색 | Vector Search | 관련 문서를 빠르게 찾음 |
-| 정밀 검색 | Reranker | 검색 결과의 관련성을 다시 판단 |
-| 답변 생성 | Qwen3 | 검색된 정보를 바탕으로 답변 |
-| 성능 향상 | Redis | 반복 요청을 빠르게 처리 |
-| 비동기 처리 | Kafka | 오래 걸리는 문서 작업을 백그라운드 처리 |
-| 최신 정보 | Tavily | LLM의 부족한 최신 정보 보완 |
-| 음성 입력 | faster-whisper | 사람의 음성을 텍스트로 변환 |
-| 음성 출력 | MeloTTS | AI 답변을 음성으로 변환 |
-| 실시간 처리 | WebSocket + VAD | 자연스러운 음성 대화 구현 |
-| 이미지 생성 | Stable Diffusion | 텍스트를 이미지로 변환 |
-| 모델 튜닝 | QLoRA + Unsloth | 로컬 환경에서 모델 추가 학습 |
-| 품질 검증 | RAGAS | RAG 결과를 정량적으로 평가 |
-| AI 연동 | MCP | 다른 AI 시스템이 RAG 기능을 사용 |
-| 서비스 분리 | FastAPI | Python 기반 AI 기능을 독립 서비스화 |
-| 실행 환경 | Docker | 여러 AI 서비스를 독립적으로 관리 |
-| 오케스트레이션 | Kubernetes | 컨테이너 기반 서비스 운영 구조 검증 |
-| 클라우드 | GCP | 실제 서버 환경 배포 검증 |
-
-### 최종적으로 얻은 구조
-
-이 프로젝트의 핵심은 다음 세 가지를 하나의 시스템으로 연결한 것입니다.
-
-**① AI 지식**
-
-```text
-문서 → OCR → Chunking → Embedding → Vector DB → RAG
-```
-
-**② AI 서비스**
-
-```text
-RAG → Reranker → Qwen3 → Redis → 사용자
-```
-
-**③ AI 확장**
-
-```text
-Kafka
-+ Tavily
-+ STT/TTS
-+ Stable Diffusion
-+ QLoRA
-+ MCP
-+ Docker/Kubernetes/GCP
-```
-
-따라서 각각의 기술이 독립적으로 존재하는 것이 아니라,
-
-> **문서를 지식으로 만들고 → 필요한 지식을 검색하고 → 가장 중요한 내용을 선별하고 → LLM이 답변하고 → 캐시와 비동기 처리로 서비스를 안정화하고 → 음성·이미지·웹검색·MCP·파인튜닝으로 기능을 확장하는 하나의 AI 파이프라인**
-
-으로 연결되어 있습니다.
-
-이 구조가 이 프로젝트의 가장 큰 장점이며, 단순 LLM 호출 예제가 아닌 **실제 AI 서비스의 전체 구성 요소를 로컬 환경에서 직접 통합하고 검증한 프로젝트**라는 것을 보여줍니다.
 
 ## 빠른 시작
 
@@ -1250,7 +140,9 @@ Docker 인프라(OpenSearch/pgvector/Ollama/Kafka/Redis), Stable Diffusion, 음�
 
 종료: `.\stop-all.ps1`
 
-## 상세 기능 설명 및 구현 결과
+> 쿠버네티스(Helm)로 배포하려면 [쿠버네티스(Helm) 배포](#쿠버네티스helm-배포) 섹션을 참고하세요.
+
+## 상세 기능 설명
 
 ### 1. 듀얼 벡터스토어 RAG
 ```
@@ -1395,6 +287,58 @@ RagService / PgVectorRagService (리랭킹·캐싱·폴백 로직 전부 포함)
 - **관심사 분리**: MCP 도구 계층이 비즈니스 로직(RagService)을 감싸는 얇은 어댑터로만 존재해, 프로토콜이 바뀌어도 핵심 로직은 그대로 재사용됩니다.
 - **에이전틱 AI 생태계 대응**: 최근 채용 시장에서 MCP/에이전틱 AI 경험에 대한 언급이 빠르게 늘고 있는데, 실제로 프로토콜을 구현하고 공식 도구로 검증까지 한 경험은 이력서상의 키워드 나열과는 다른 실질적 증빙이 됩니다.
 
+### 10. 실시간 스트리밍 응답 (Java Flux + SSE)
+
+**이 기술이 뭔가요?**
+
+기존 텍스트 RAG API(`/api/rag/ask`)는 LLM이 답변을 전부 생성할 때까지 기다렸다가 한 번에 응답하는 방식이었습니다. 답변이 길수록 사용자는 아무 진행 상황도 못 보고 몇 초~몇십 초를 그냥 기다려야 했습니다. **Server-Sent Events(SSE)**는 서버가 클라이언트에 실시간으로 데이터를 "밀어넣는" HTTP 표준 방식으로, ChatGPT나 Claude 같은 서비스에서 답변이 타이핑되듯 나오는 그 효과가 바로 이 방식입니다.
+
+**이 프로젝트에서의 역할**
+
+```
+Java: @GetMapping(produces=TEXT_EVENT_STREAM_VALUE) → Flux<String> 반환
+    (Spring MVC 위에서도 reactor-core만 있으면 별도 WebFlux 도입 없이 동작)
+JS: EventSource(SSE 프로토콜 수신, 브라우저 표준 API) + jQuery(DOM 갱신)
+```
+
+- 기존 `OllamaService.generateStream(prompt, Consumer<String>)`(콜백 기반, 음성 파이프라인용)은 그대로 두고, 이를 `Flux.create()`로 감싼 `generateStreamReactive()`를 추가해 재사용했습니다.
+- `RagService`/`PgVectorRagService`의 검색+리랭킹 로직은 스트림 구독 전에 동기로 먼저 끝내고, LLM 생성 토큰만 Flux로 흘려보내는 구조입니다.
+- 스트림 끝에 `[[STREAM_DONE]]`이라는 명시적 종료 마커를 추가로 흘려보냅니다. (SSE는 서버가 연결을 닫으면 브라우저의 `EventSource`가 기본적으로 "자동 재연결"을 시도하는데, 이때 정상 종료와 실제 연결 장애를 구분하기 어려운 문제가 있어, 브라우저의 연결 종료 감지에 기대지 않고 명시적 신호로 해결했습니다.)
+
+**장점**
+
+- 답변 생성 중임을 실시간으로 보여줘 체감 응답성이 크게 개선됩니다.
+- Spring MVC(서블릿 기반) 애플리케이션에서 WebFlux 전체 스택 도입 없이, 리액티브 타입(`Flux`) 반환만으로 SSE를 구현할 수 있음을 확인했습니다.
+- 캐싱이 적용된 기존 논스트리밍 엔드포인트와 스트리밍 엔드포인트를 용도에 따라 분리해, 각각의 트레이드오프(캐시 재사용 vs 실시간성)를 명확히 했습니다.
+
+### 11. 관측성 (Prometheus + Grafana)
+
+**이 기술이 뭔가요?**
+
+애플리케이션이 "지금 잘 동작하고 있는지"를 로그를 일일이 읽지 않고도 한눈에 파악할 수 있게 하는 모니터링 스택입니다. **Micrometer**가 애플리케이션 내부에서 지표(요청 지연시간, 캐시 히트율 등)를 측정해 표준 포맷으로 노출하면, **Prometheus**가 주기적으로 그 지표를 수집(스크레이핑)해 시계열 데이터베이스에 쌓고, **Grafana**가 그 데이터를 대시보드로 시각화합니다.
+
+**이 프로젝트에서의 역할**
+
+```
+Spring Boot(Micrometer) → /actuator/prometheus 노출
+    ↓ 15초마다 스크레이핑
+Prometheus(:9090) → 시계열 저장
+    ↓
+Grafana(:3000) → 대시보드 6개 패널
+```
+
+- **요청 지연시간(p50/p95/p99)**, **초당 요청 수**: Spring Boot Actuator + Micrometer가 모든 엔드포인트에 자동으로 히스토그램을 생성해줘 별도 코드 없이 확보했습니다.
+- **캐시 히트율**: `CacheService`에 Micrometer `Counter`(히트/미스/에러)를 커스텀으로 추가했습니다.
+- **리랭킹 성공/폴백 비율**: `RerankService`에 성공/폴백 카운터를 추가해, 리랭크 서비스 장애 빈도를 실시간으로 관찰할 수 있게 했습니다.
+- **Kafka Consumer Lag**: 별도 코드 없이, `micrometer-registry-prometheus`가 클래스패스에 있으면 Spring for Apache Kafka가 자동으로 `KafkaClientMetrics`를 등록해줍니다.
+- Grafana 대시보드와 데이터소스는 프로비저닝(코드/설정 파일)으로 자동 구성되어, 컨테이너를 새로 띄우면 수동 설정 없이 바로 대시보드가 나타납니다.
+
+**장점**
+
+- 장애나 성능 저하가 발생했을 때 "어디서, 왜" 문제가 생겼는지 로그를 뒤지지 않고 대시보드에서 바로 확인 가능합니다 (예: 리랭크 폴백 비율이 갑자기 치솟으면 리랭크 서비스 장애를 즉시 의심할 수 있음).
+- 캐시 히트율처럼 비즈니스 로직에 특화된 지표까지 커스텀으로 노출해, 프레임워크가 자동 제공하는 지표를 넘어선 관측성을 확보했습니다.
+- 이번 관측성 구축 과정에서 실제로 **PDF/TXT 파싱 버그를 우연히 발견**했습니다 (Kafka lag 테스트 중 텍스트 파일 업로드가 실패하는 게 로그로 바로 드러남) — 관측성 인프라가 실질적인 디버깅 도구로도 작동한다는 것을 보여주는 사례입니다.
+
 ## 클라우드 배포
 
 GCP Compute Engine 무료 체험($300 크레딧, 90일)에 경량화된 버전을 배포했습니다.
@@ -1404,6 +348,34 @@ GCP Compute Engine 무료 체험($300 크레딧, 90일)에 경량화된 버전�
 - **핵심 이슈**: OpenSearch가 없는 환경에서 `OpenSearchIndexInitializer`의 `@PostConstruct`가 예외를 던져 앱 전체가 기동 실패하던 버그를 발견, 예외를 흡수하도록 수정하여 해결 (자세한 내용은 SETUP.md 참고)
 
 배포 절차는 [SETUP.md의 클라우드 배포 섹션](./SETUP.md)을 참고하세요.
+
+## 쿠버네티스(Helm) 배포
+
+Docker Compose로 개인 PC에서만 돌던 스택을, **Helm 차트**로 재구성해 쿠버네티스(Docker Desktop Kubernetes) 위에도 배포해봤습니다. 목적은 단순 실행 확인이 아니라 "여러 컴포넌트를 하나의 명령으로 배포하고, 장애 시 자동 복구되고, 설정을 코드와 분리 관리하는" 실무형 배포 경험을 직접 검증하는 것이었습니다.
+
+**왜 하이브리드 구조인가**: Ollama·Stable Diffusion·리랭커처럼 GPU가 필요한 컴포넌트는 로컬 PC(RTX 3060, VRAM 6GB 단일 GPU)의 쿠버네티스 환경에서 GPU 패스스루가 기본 지원되지 않는 구조적 제약이 있습니다. 그래서 GPU가 필요 없는 7개 컴포넌트(Spring Boot, OpenSearch, pgvector, Redis, Kafka, Prometheus, Grafana)만 Helm으로 쿠버네티스에 배포하고, GPU 컴포넌트는 기존 Docker Compose에 남겨 두 환경을 `host.docker.internal` 경유로 연결했습니다. 무리하게 전체를 다 옮기기보다, 컴포넌트 특성에 맞게 배치를 나눈 의사결정입니다.
+
+**배포 명령 한 줄**:
+```powershell
+cd D:\MyAiProject\helm
+helm install ai-platform ./local-ai-platform `
+  --set secrets.postgresPassword=<비밀번호> `
+  --set monitoring.grafana.adminPassword=<비밀번호>
+```
+
+**주요 장점**:
+- 컴포넌트 7개를 올바른 순서로 한 번에 배포 (Docker Compose처럼 하나하나 실행 순서를 신경 쓸 필요 없음)
+- 파드 장애 시 쿠버네티스가 자동 재시작 (`RESTARTS` 횟수로 확인 가능)
+- DB 비밀번호 등 민감 정보를 `Secret` 리소스로 코드와 분리 관리
+- `values.yaml`(로컬)/`values-gcp.yaml`(클라우드)로 환경별 설정만 바꿔 동일 차트 재사용
+
+**배포 과정에서 실제로 겪은 문제 두 가지**:
+1. Spring Boot 4.x + Spring Data Redis는 프로퍼티가 `spring.redis.*`에서 `spring.data.redis.*`로 바뀌었는데, Helm ConfigMap에 옛 이름(`SPRING_REDIS_HOST`)을 넣어 조용히 무시되고 `localhost`로 접속을 시도한 문제
+2. `OllamaService`의 스트리밍 전용 메서드가 Spring AI 설정을 안 타고 `"http://localhost:11434"`를 코드에 직접 하드코딩해둬서, 로컬 실행에선 우연히 문제없이 동작하다가 쿠버네티스 배포 시에만 드러난 버그
+
+두 건 모두 "K8s 네트워킹 문제처럼 보였지만 실제로는 설정 이름 불일치 / 코드 하드코딩"이었다는 공통점이 있어, 겉보기 증상만으로 판단하지 않고 로그와 코드를 직접 추적해 원인을 좁혀가는 과정을 거쳤습니다.
+
+전체 배포 절차, 실행/종료/로그 확인 명령어, 상세 트러블슈팅 기록은 [SETUP.md 20장](./SETUP.md#20-쿠버네티스helm로-전체-스택-배포)을 참고하세요.
 
 ## 주요 기술적 의사결정 및 트러블슈팅
 
@@ -1433,6 +405,12 @@ GCP Compute Engine 무료 체험($300 크레딧, 90일)에 경량화된 버전�
 | MCP Inspector 실행 시 `npx: 용어가 인식되지 않습니다` | 이 프로젝트는 Java/Spring 스택이라 Node.js가 설치돼 있지 않았음 | `winget install OpenJS.NodeJS.LTS`로 설치 후 **터미널을 완전히 새로 열어야** PATH가 반영됨 |
 | `start.sh`로 Stable Diffusion/음성 서버가 하나도 안 뜸 | IntelliJ의 내장 실행 버튼으로 셸 스크립트를 돌리면 `start`(cmd 내장 명령)나 `mintty`(GUI 새 창 실행)가 IntelliJ의 제한된 프로세스 환경에서 정상 동작하지 않음 | IntelliJ 밖의 진짜 Git Bash 터미널 창을 직접 열어서 `./start.sh` 실행 |
 | MCP 서버 엔드포인트 경로를 몰라 Inspector 연결 실패 | Spring AI MCP webmvc 스타터의 기본 SSE 경로가 문서마다 다르게 언급되어 혼동 | 브라우저로 직접 `http://localhost:8080/sse`를 열어 SSE 스트림(`event:endpoint` 응답)이 나오는지로 실제 경로 확인 |
+| SSE 스트림이 정상 완료됐는데도 프론트엔드에 "연결이 끊겼습니다" 에러 표시 | `EventSource`는 서버가 연결을 닫으면 기본적으로 "자동 재연결"을 시도하는데, 이때 `readyState`가 `CLOSED`가 아니라 `CONNECTING`이 되어 정상 종료와 실제 장애를 구분하기 어려움 | 스트림 끝에 `[[STREAM_DONE]]` 같은 명시적 종료 마커를 서버가 추가로 보내고, 클라이언트가 그 마커를 보면 자체적으로 `eventSource.close()` 호출 |
+| `docker compose up`이 볼륨으로 마운트하려는 설정 파일(`prometheus.yml` 등)을 못 찾고 `not a directory` 에러 | 실제 파일을 복사하기 전에 먼저 `docker compose up`을 시도하면, Docker가 호스트 경로가 없다고 판단해 자동으로 **빈 디렉토리**를 만들어버림 — 이후 진짜 파일을 그 이름으로 복사해도 안 덮어써짐 | `Remove-Item -Recurse -Force`로 잘못 생성된 폴더를 지운 뒤 실제 파일로 교체. 앞으로는 설정 파일을 먼저 배치한 후 `docker compose up` 실행 |
+| Grafana에 데이터소스/대시보드가 자동으로 안 뜸 (`Recent dashboards 0`) | "Recent dashboards"는 최근에 연 대시보드만 보여주는 위젯이라, 프로비저닝은 정상이어도 한 번도 안 열어봤으면 비어 보임 | 왼쪽 사이드바 **Dashboards** 메뉴에서 직접 확인 (프로비저닝 자체는 정상이었음) |
+| 비동기 문서 업로드로 `.txt` 파일을 올리면 항상 `Error: End-of-File, expected line`으로 실패 | `PgVectorIngestService.ingestPdf()`가 파일 형식과 무관하게 무조건 PDFBox로 파싱을 시도하도록 구현되어 있었음 (실제 버그, Kafka 관측성 테스트 중 발견) | 파일 확장자/Content-Type을 확인해 PDF만 PDFBox로 파싱하고, 그 외는 UTF-8 텍스트로 직접 읽도록 분기 추가 |
+| Helm 배포 후 Redis/OpenSearch 연결 실패 (`Unable to connect to localhost`) | Spring Boot 4.x부터 프로퍼티가 `spring.redis.*` → `spring.data.redis.*`로 변경됐는데, Helm ConfigMap에 옛 환경변수 이름을 넣어 조용히 무시되고 기본값(localhost)으로 접속 시도 | `application.yml`의 실제 프로퍼티 이름을 확인해 `SPRING_DATA_REDIS_HOST` 등으로 정정 |
+| K8s에서만 Ollama 스트리밍이 `ClosedChannelException`으로 실패 (일반 채팅은 정상) | `OllamaService`의 스트리밍 전용 메서드가 Spring AI 설정을 안 타고 `"http://localhost:11434"`를 코드에 직접 하드코딩. 로컬 실행에선 우연히 항상 맞아서 드러나지 않던 버그 | `@Value("${spring.ai.ollama.base-url}")`로 주입받도록 수정 |
 
 ## 로드맵
 
@@ -1448,6 +426,9 @@ GCP Compute Engine 무료 체험($300 크레딧, 90일)에 경량화된 버전�
 - [x] **QLoRA 기반 로컬 파인튜닝 (unsloth)** — Qwen3-4B, RTX 3060 6GB VRAM에서 완료 (결과: [상세 기능 설명 7번](#7-qlora-로컬-파인튜닝-unsloth))
 - [x] **리랭킹 (Cross-Encoder Reranking)** — BAAI/bge-reranker-v2-m3, OpenSearch/pgvector 양쪽 통합 완료 (결과: [상세 기능 설명 8번](#8-리랭킹-cross-encoder-reranking))
 - [x] **MCP(Model Context Protocol) 서버** — Spring AI 2.0 `@McpTool`, MCP Inspector로 검증 완료 (결과: [상세 기능 설명 9번](#9-mcpmodel-context-protocol-서버))
+- [x] **실시간 스트리밍 응답 (Flux + SSE)** — 텍스트 RAG 질답도 토큰 단위 실시간 스트리밍 완료 (결과: [상세 기능 설명 10번](#10-실시간-스트리밍-응답-java-flux--sse))
+- [x] **관측성 (Prometheus + Grafana)** — 요청 지연시간, 캐시 히트율, Kafka consumer lag, 리랭킹 성공/폴백 비율 대시보드 구축 완료 (결과: [상세 기능 설명 11번](#11-관측성-prometheus--grafana))
+- [x] **쿠버네티스(Helm) 배포** — GPU 미필요 컴포넌트 7종을 Helm 차트로 일괄 배포, GPU 컴포넌트는 Docker Compose와 하이브리드 연결 (결과: [쿠버네티스(Helm) 배포](#쿠버네티스helm-배포))
 - [ ] **클라우드(GCP) 배포 최종 마무리** — 서버 재기동 확인 및 정식 코드 동기화 남음
-- [ ] 관측성 (Prometheus + Grafana) — 요청 지연시간, 캐시 히트율, Kafka consumer lag 등 메트릭 시각화
-
+- [ ] CI/CD (GitHub Actions) — 빌드/테스트 자동화
+- [ ] 시맨틱 캐싱 — 임베딩 유사도 기반으로 비슷한 질문도 캐시 히트되도록 확장
