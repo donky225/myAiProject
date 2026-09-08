@@ -1,4 +1,4 @@
-# Local Multimodal AI Platform
+**# Local Multimodal AI Platform
 
 본 프로젝트는 울산 한국동서발전 생성형 AI/LLM 구축 프로젝트에 참여하며 습득한 엔터프라이즈 LLM 아키텍처와 개발 경험을 기반으로, 상용 솔루션에 의존하지 않고 오픈소스 기술로 동일한 핵심 기능과 아키텍처를 직접 재설계하여 구축한 개인 기술 검증 프로젝트입니다.
 
@@ -15,6 +15,7 @@
 - [상세 기능 설명](#상세-기능-설명)
 - [클라우드 배포](#클라우드-배포)
 - [쿠버네티스(Helm) 배포](#쿠버네티스helm-배포)
+- [CI/CD (GitHub Actions)](#cicd-github-actions)
 - [주요 기술적 의사결정 및 트러블슈팅](#주요-기술적-의사결정-및-트러블슈팅)
 - [로드맵](#로드맵)
 
@@ -40,28 +41,28 @@
 ## 아키텍처
 
 ```
-                         ┌──────────────────────┐                    ┌────────────────────────┐
-                         │   웹 UI (index.html) │                    │ MCP 클라이언트          │
-                         └──────────┬───────────┘                    │ (Claude Desktop 등)    │
-                        HTTP        │        WebSocket (실시간 음성)  └──────────┬─────────────┘
-              ┌─────────────────────┼─────────────────────┐                     │ SSE
-              ▼                     ▼                     ▼                     ▼
-    ┌────────────────────────────────────────────────────────────────────────────────────────┐
-    │                                      Spring Boot :8080                                 │
-    │  REST API (/api/rag/ask 등)                                MCP 서버 (@McpTool, /sse)    │
-    └──┬───┬───┬───┬─────────────────────────────────────────────────────────────────────────┘
+                         ┌──────────────────────┐                    ┌───────────────────────┐
+                         │   웹 UI (index.html) │                    │ MCP 클라이언트         │
+                         └──────────┬───────────┘                    │ (Claude Desktop 등)   │
+                        HTTP        │        WebSocket (실시간 음성)  └──────────┬────────────┘
+              ┌─────────────────────┼─────────────────────┐              │ SSE
+              ▼                     ▼                     ▼              ▼
+    ┌───────────────────────────────────────────────────────────────────────────┐
+    │                         Spring Boot :8080                                 │
+    │  REST API (/api/rag/ask 등)          MCP 서버 (@McpTool, /sse)             │
+    └──┬───┬───┬───┬────────────────────────────────────────────────────────────┘
        │   │   │   │
        │   │   │   └──────────────┐
        │   │   └──────┐           ▼
        │   ▼          ▼      ┌─────────────────┐
-       │ ┌─────────┐ ┌─────┐ │    Kafka        │
+       │ ┌─────────┐ ┌────┐  │ Kafka           │
        │ │pgvector │ │Redis│ │ (비동기 인제스트)│
-       │ └─────────┘ └─────┘ └─────────────────┘
+       │ └─────────┘ └────┘  └─────────────────┘
        ▼
-┌───────────┐  ┌───────────────────────┐  ┌────────────────────────┐
-│OpenSearch │  │  Ollama :11434        │  │ Rerank Service :8002   │
-│  :9200    │  │  qwen3:4b (생성/스트림)│  │ (FastAPI, bge-reranker)│
-└───────────┘  │  qwen3-embedding:0.6b │  └────────────────────────┘
+┌───────────┐  ┌───────────────────────┐  ┌─────────────────────────┐
+│OpenSearch │  │  Ollama :11434        │  │ Rerank Service :8002    │
+│  :9200    │  │  qwen3:4b (생성/스트림)│  │ (FastAPI, bge-reranker) │
+└───────────┘  │  qwen3-embedding:0.6b │  └─────────────────────────┘
                └───────────────────────┘
               브라우저에서 직접 호출 (CORS 허용)
               ┌──────────────────────────┐
@@ -125,6 +126,7 @@ MCP 클라이언트 → SSE 연결(/sse) → search_company_documents 도구 호
 | 실시간 통신(텍스트) | Spring MVC + Project Reactor `Flux` (SSE), 브라우저 `EventSource` + jQuery |
 | 관측성 | Micrometer, Prometheus, Grafana (프로비저닝 기반 자동 대시보드) |
 | 배포 | Docker Compose (로컬 GPU 서비스), **Kubernetes + Helm 차트** (CPU 컴포넌트 7종 일괄 배포), GCP Compute Engine (클라우드 경량 데모) |
+| CI/CD | **GitHub Actions** (push/PR마다 빌드+테스트 자동화, main 병합 시 Docker 이미지 ghcr.io 자동 배포) |
 | 개발 환경 | IntelliJ IDEA(+ devtools), Windows 11, Docker Desktop(WSL2), NVIDIA RTX 3060 (VRAM 6GB) |
 
 ## 빠른 시작
@@ -377,6 +379,24 @@ helm install ai-platform ./local-ai-platform `
 
 전체 배포 절차, 실행/종료/로그 확인 명령어, 상세 트러블슈팅 기록은 [SETUP.md 20장](./SETUP.md#20-쿠버네티스helm로-전체-스택-배포)을 참고하세요.
 
+## CI/CD (GitHub Actions)
+
+지금까지는 `docker build`로 배포 이미지를 만드는 것도 사람이 직접 실행해야 했습니다. 이 프로젝트는 GitHub Actions로 **push/PR마다 자동 빌드·테스트**, **main 브랜치 병합 시 Docker 이미지를 GitHub Container Registry(ghcr.io)에 자동 배포**하는 파이프라인을 구성했습니다.
+
+```
+코드 push/PR → [빌드+테스트 (mvn clean verify)] → (main push인 경우만) → [ghcr.io에 이미지 자동 배포]
+```
+
+**설계 포인트**: PR(검증 전 코드)에서는 빌드/테스트만 확인하고, main에 실제로 병합된 코드만 배포 이미지로 만듭니다. 검증 안 된 코드가 배포되는 걸 막기 위한 안전장치입니다.
+
+**배포 방식**: `secrets.GITHUB_TOKEN`(GitHub가 저장소마다 자동 발급하는 토큰)으로 인증하기 때문에, 별도의 계정 생성이나 키 발급 없이 바로 동작합니다.
+
+이 작업을 하면서 두 가지를 실제로 겪었습니다.
+1. 프로젝트 생성 당시 자동 생성된 기본 테스트(`AiApplicationTests`)가 패키지 불일치로 계속 깨져 있었는데, 지금까지 `mvn test`를 습관적으로 실행한 적이 없어(Dockerfile도 `-DskipTests`) 발견되지 못하고 있었음 — CI를 붙이는 과정에서 처음 발견하고 정리
+2. `application.yml`에 하드코딩된 Tavily API 키가 담긴 채로 커밋될 뻔했음 (Public 저장소). 다행히 push가 다른 이유로 먼저 실패해 원격 유출 전에 `.gitignore` 등록 + `git commit --amend`로 커밋 히스토리에서 제거하고, 실제 값 대신 플레이스홀더만 남긴 `application.yml.example` 템플릿으로 대체
+
+상세 명령어와 트러블슈팅 전체 기록은 [SETUP.md 21장](./SETUP.md#21-cicd-github-actions)을 참고하세요.
+
 ## 주요 기술적 의사결정 및 트러블슈팅
 
 전체 목록은 [SETUP.md](./SETUP.md)를 참고하세요. 최근 주요 이슈만 요약합니다.
@@ -411,6 +431,8 @@ helm install ai-platform ./local-ai-platform `
 | 비동기 문서 업로드로 `.txt` 파일을 올리면 항상 `Error: End-of-File, expected line`으로 실패 | `PgVectorIngestService.ingestPdf()`가 파일 형식과 무관하게 무조건 PDFBox로 파싱을 시도하도록 구현되어 있었음 (실제 버그, Kafka 관측성 테스트 중 발견) | 파일 확장자/Content-Type을 확인해 PDF만 PDFBox로 파싱하고, 그 외는 UTF-8 텍스트로 직접 읽도록 분기 추가 |
 | Helm 배포 후 Redis/OpenSearch 연결 실패 (`Unable to connect to localhost`) | Spring Boot 4.x부터 프로퍼티가 `spring.redis.*` → `spring.data.redis.*`로 변경됐는데, Helm ConfigMap에 옛 환경변수 이름을 넣어 조용히 무시되고 기본값(localhost)으로 접속 시도 | `application.yml`의 실제 프로퍼티 이름을 확인해 `SPRING_DATA_REDIS_HOST` 등으로 정정 |
 | K8s에서만 Ollama 스트리밍이 `ClosedChannelException`으로 실패 (일반 채팅은 정상) | `OllamaService`의 스트리밍 전용 메서드가 Spring AI 설정을 안 타고 `"http://localhost:11434"`를 코드에 직접 하드코딩. 로컬 실행에선 우연히 항상 맞아서 드러나지 않던 버그 | `@Value("${spring.ai.ollama.base-url}")`로 주입받도록 수정 |
+| GitHub Actions 도입 후 `mvn test`가 처음으로 `BUILD FAILURE` | 프로젝트 생성 당시 자동 생성된 기본 테스트가 패키지 불일치(`com.example.llm` vs 실제 `com.ai.llm`)로 컨텍스트를 못 찾음. 지금까지 테스트를 습관적으로 실행한 적이 없어 발견되지 않고 있었음 | 전체 인프라(DB 등)가 필요한 컨텍스트 로드 테스트라 CI에서 살리기 어렵다고 판단, 삭제 |
+| `application.yml`의 API 키가 Public 저장소에 커밋될 뻔함 | `.gitignore`에 처음부터 `application.yml`이 등록돼 있지 않았음 | push 전에 발견해 `git rm --cached` + `.gitignore` 등록 + `git commit --amend`로 히스토리에서 제거, 플레이스홀더 템플릿(`application.yml.example`)으로 대체 |
 
 ## 로드맵
 
@@ -429,6 +451,6 @@ helm install ai-platform ./local-ai-platform `
 - [x] **실시간 스트리밍 응답 (Flux + SSE)** — 텍스트 RAG 질답도 토큰 단위 실시간 스트리밍 완료 (결과: [상세 기능 설명 10번](#10-실시간-스트리밍-응답-java-flux--sse))
 - [x] **관측성 (Prometheus + Grafana)** — 요청 지연시간, 캐시 히트율, Kafka consumer lag, 리랭킹 성공/폴백 비율 대시보드 구축 완료 (결과: [상세 기능 설명 11번](#11-관측성-prometheus--grafana))
 - [x] **쿠버네티스(Helm) 배포** — GPU 미필요 컴포넌트 7종을 Helm 차트로 일괄 배포, GPU 컴포넌트는 Docker Compose와 하이브리드 연결 (결과: [쿠버네티스(Helm) 배포](#쿠버네티스helm-배포))
+- [x] **CI/CD (GitHub Actions)** — push/PR마다 빌드+테스트 자동화, main 병합 시 Docker 이미지 ghcr.io 자동 배포 (결과: [CI/CD (GitHub Actions)](#cicd-github-actions))
 - [ ] **클라우드(GCP) 배포 최종 마무리** — 서버 재기동 확인 및 정식 코드 동기화 남음
-- [ ] CI/CD (GitHub Actions) — 빌드/테스트 자동화
-- [ ] 시맨틱 캐싱 — 임베딩 유사도 기반으로 비슷한 질문도 캐시 히트되도록 확장
+- [ ] 시맨틱 캐싱 — 임베딩 유사도 기반으로 비슷한 질문도 캐시 히트되도록 확장**
