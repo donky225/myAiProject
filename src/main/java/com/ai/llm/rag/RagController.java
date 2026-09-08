@@ -1,6 +1,7 @@
 package com.ai.llm.rag;
 
 import com.ai.llm.cache.CacheService;
+import com.ai.llm.cache.SemanticCacheService;
 import com.ai.llm.pgvector.PgVectorRagService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,14 +26,26 @@ public class RagController {
     private final RagService ragService;
     private final PgVectorRagService pgVectorRagService;
     private final CacheService cacheService;
+    private final SemanticCacheService semanticCacheService;
 
-    public RagController(RagService ragService, PgVectorRagService pgVectorRagService, CacheService cacheService) {
+    public RagController(RagService ragService,
+                         PgVectorRagService pgVectorRagService,
+                         CacheService cacheService,
+                         SemanticCacheService semanticCacheService) {
         this.ragService = ragService;
         this.pgVectorRagService = pgVectorRagService;
         this.cacheService = cacheService;
+        this.semanticCacheService = semanticCacheService;
     }
 
     // store=opensearch(기본값) 또는 store=pgvector 로 두 벡터스토어를 비교 테스트할 수 있습니다.
+    //
+    // 캐시는 2단계로 구성됩니다.
+    //   1차: 정확 일치 캐시(CacheService) — 완전히 같은 문자열일 때만 히트. 임베딩 계산이 없어 가장 빠름.
+    //   2차: 시맨틱 캐시(SemanticCacheService) — 문구는 다르지만 의미가 비슷한 질문도 히트.
+    //        (예: "파마리서치 직원수는?" ↔ "파마리서치 직원이 몇 명이야?")
+    // 1차에서 못 찾은 걸 2차에서 찾으면, 그 답을 1차 캐시에도 즉시 채워 넣어(cacheService.put)
+    // 다음번 완전 동일 질문은 임베딩 계산조차 없이 더 빠르게 히트되도록 합니다.
     @GetMapping("/api/rag/ask")
     public String ask(@RequestParam String question,
                       @RequestParam(defaultValue = "opensearch") String store) {
@@ -42,8 +55,16 @@ public class RagController {
 
         String cached = cacheService.get(cacheKey);
         if (cached != null) {
-            log.info("<<< 캐시 히트, LLM 호출 없이 즉시 응답");
+            log.info("<<< 정확 일치 캐시 히트, LLM 호출 없이 즉시 응답");
             return cached;
+        }
+
+        SemanticCacheService.LookupResult semanticResult = semanticCacheService.find(question, store);
+        if (semanticResult.isHit()) {
+            log.info("<<< 시맨틱 캐시 히트 (유사도={}), LLM 호출 없이 즉시 응답",
+                    String.format("%.4f", semanticResult.getBestScore()));
+            cacheService.put(cacheKey, semanticResult.getAnswer(), CACHE_TTL);
+            return semanticResult.getAnswer();
         }
 
         String answer = "pgvector".equalsIgnoreCase(store)
@@ -51,6 +72,7 @@ public class RagController {
                 : ragService.ask(question);
 
         cacheService.put(cacheKey, answer, CACHE_TTL);
+        semanticCacheService.store(question, store, answer, semanticResult.getQueryEmbedding(), CACHE_TTL);
         log.info("<<< 응답 완료 및 캐시 저장 (TTL={}분)", CACHE_TTL.toMinutes());
         return answer;
     }
@@ -65,8 +87,8 @@ public class RagController {
      *  어렵습니다. 그래서 브라우저의 연결 종료 감지에 기대지 않고, 이 명시적 마커를
      *  클라이언트가 직접 보고 종료 처리하도록 합니다.)
      *
-     * 참고: 이 엔드포인트는 캐싱을 적용하지 않습니다. 부분 토큰 스트림을 캐시했다가
-     * 그대로 재생하는 것은 복잡도 대비 이득이 적어, 캐싱이 필요한 경우 기존
+     * 참고: 이 엔드포인트는 캐싱(정확 일치/시맨틱 모두)을 적용하지 않습니다. 부분 토큰 스트림을
+     * 캐시했다가 그대로 재생하는 것은 복잡도 대비 이득이 적어, 캐싱이 필요한 경우 기존
      * /api/rag/ask(논스트리밍)를 사용하도록 분리했습니다.
      */
     public static final String STREAM_DONE_MARKER = "[[STREAM_DONE]]";
