@@ -1,0 +1,83 @@
+name: CI/CD
+
+# main 브랜치로 푸시되거나, main을 대상으로 PR이 열릴 때 실행됩니다.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# ghcr.io(GitHub Container Registry)에 이미지를 푸시하려면 packages 쓰기 권한이 필요합니다.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # ─────────────────────────────────────────────
+  # 1) 빌드 + 테스트 (push, PR 둘 다 실행)
+  # ─────────────────────────────────────────────
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 소스 체크아웃
+        uses: actions/checkout@v4
+
+      - name: JDK 21 설치 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven   # ~/.m2 캐시 자동 관리 → 매번 의존성 새로 안 받아도 됨
+
+      - name: Maven 빌드 + 테스트
+        run: mvn -B clean verify
+
+      # 테스트가 실패해도 결과 리포트는 항상 업로드 (원인 확인용)
+      - name: 테스트 결과 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-test-results
+          path: target/surefire-reports/
+
+  # ─────────────────────────────────────────────
+  # 2) Docker 이미지 빌드 + ghcr.io 푸시
+  #    main 브랜치에 실제로 푸시됐을 때만 실행 (PR에서는 실행 안 함)
+  #    build-and-test가 성공해야만 실행됨 (needs)
+  # ─────────────────────────────────────────────
+  docker-publish:
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 소스 체크아웃
+        uses: actions/checkout@v4
+
+      - name: ghcr.io 로그인
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # 저장소에 자동 제공되는 토큰, 별도 발급 불필요
+
+      - name: 이미지 메타데이터(태그) 생성
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/local-ai-platform-springboot
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=
+
+      - name: Docker Buildx 준비
+        uses: docker/setup-buildx-action@v3
+
+      - name: 빌드 + 푸시
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

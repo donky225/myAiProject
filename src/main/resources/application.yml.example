@@ -1,0 +1,104 @@
+spring:
+  spring:
+    ai:
+      mcp:
+        server:
+          enabled: true
+          name: local-ai-platform-mcp
+          version: 1.0.0
+          type: SYNC
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: document-ingest-group
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.ai.llm.kafka"
+        spring.json.value.default.type: com.ai.llm.kafka.DocumentUploadEvent
+  web:
+    resources:
+      cache:
+        period: 0
+      chain:
+        cache: false
+    thymeleaf:
+      cache: false
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+  application:
+    name: demo
+  datasource:
+    url: jdbc:postgresql://localhost:5432/rag_db
+    username: YOUR_DB
+    password: YOUR_DB_PASSWORD
+  ai:
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        options:
+          model: qwen3:4b
+          temperature: 0.2
+      embedding:
+        options:
+          model: qwen3-embedding:0.6b
+
+    vectorstore:
+      opensearch:
+        aws:
+          enabled: false
+        uris: http://localhost:9200
+        index-name: demo-index
+      pgvector:
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+        dimensions: 1024
+        initialize-schema: true
+
+server:
+  port: 8080
+
+opensearch:
+  base-url: http://localhost:9200
+  index-name: rag_documents
+
+tesseract:
+  datapath: C:/Program Files/Tesseract-OCR/tessdata
+
+tavily:
+  api-key: YOUR_TAVILY_API_KEY
+
+rerank:
+  enabled: true
+  service-url: http://localhost:8002
+  candidate-count: 10
+  top-k: 3
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus, metrics
+  endpoint:
+    prometheus:
+      enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true   # p50/p95/p99 계산을 위한 히스토그램 버킷 활성화
+    tags:
+      application: rag-app
+
+logging:
+  level:
+    com.ai.llm: DEBUG    # 이 프로젝트 패키지는 DEBUG까지 (벡터검색 후보 수 등 상세 확인)
+    root: INFO
