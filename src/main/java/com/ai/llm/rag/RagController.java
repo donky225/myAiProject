@@ -29,9 +29,9 @@ public class RagController {
     private final SemanticCacheService semanticCacheService;
 
     public RagController(RagService ragService,
-                         PgVectorRagService pgVectorRagService,
-                         CacheService cacheService,
-                         SemanticCacheService semanticCacheService) {
+                          PgVectorRagService pgVectorRagService,
+                          CacheService cacheService,
+                          SemanticCacheService semanticCacheService) {
         this.ragService = ragService;
         this.pgVectorRagService = pgVectorRagService;
         this.cacheService = cacheService;

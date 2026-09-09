@@ -36,7 +36,7 @@ class SemanticCacheServiceTest {
 
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
 
-        service = new SemanticCacheService(redisTemplate, ollamaService, objectMapper);
+        service = new SemanticCacheService(redisTemplate, ollamaService);
         // @Value로 주입되는 필드는 Spring 컨테이너 밖에서는 채워지지 않으므로 테스트에서 직접 설정
         ReflectionTestUtils.setField(service, "similarityThreshold", 0.95);
     }

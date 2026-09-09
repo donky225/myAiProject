@@ -32,18 +32,19 @@ public class SemanticCacheService {
 
     private static final Logger log = LoggerFactory.getLogger(SemanticCacheService.class);
     private static final String KEY_PREFIX = "semcache:";
+    // 프로젝트 내 다른 서비스(OllamaService 등)와 동일하게, 스프링 빈 대신 직접 생성해서 사용.
+    // (이 프로젝트에는 ObjectMapper가 자동 구성 빈으로 등록되어 있지 않음)
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     private final StringRedisTemplate redisTemplate;
     private final OllamaService ollamaService;
-    private final ObjectMapper objectMapper;
 
     @Value("${semantic-cache.similarity-threshold:0.95}")
     private double similarityThreshold;
 
-    public SemanticCacheService(StringRedisTemplate redisTemplate, OllamaService ollamaService, ObjectMapper objectMapper) {
+    public SemanticCacheService(StringRedisTemplate redisTemplate, OllamaService ollamaService) {
         this.redisTemplate = redisTemplate;
         this.ollamaService = ollamaService;
-        this.objectMapper = objectMapper;
     }
 
     /**
